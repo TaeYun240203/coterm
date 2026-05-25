@@ -175,6 +175,19 @@ func TestRunDangerousCommandDeniedDoesNotInjectTargetCommand(t *testing.T) {
 			t.Fatalf("target command was injected after denial: %#v", client.SentKeys)
 		}
 	}
+	paths, err := state.Ensure(workspace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	paneState, err := state.LoadPaneState(paths)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, record := range paneState.Panes {
+		if record.Name == "main1" {
+			t.Fatalf("target pane was created after denial: %#v", paneState.Panes)
+		}
+	}
 }
 
 func TestRunFullAccessSkipsDangerousCommandPrompt(t *testing.T) {

@@ -121,9 +121,10 @@ func TestRequestApprovalTimesOutAndDeletesStaleResponse(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	client := tmux.NewFake()
 	decision, err := Request(context.Background(), Options{
 		Paths:        paths,
-		Tmux:         tmux.NewFake(),
+		Tmux:         client,
 		Action:       "delete files",
 		TargetPane:   "main1",
 		CommandID:    "cmd_test",
@@ -139,6 +140,12 @@ func TestRequestApprovalTimesOutAndDeletesStaleResponse(t *testing.T) {
 	}
 	if _, err := os.Stat(responsePath); !os.IsNotExist(err) {
 		t.Fatalf("response file was not deleted after timeout: %v", err)
+	}
+	if len(client.SentKeys) < 2 {
+		t.Fatalf("sent keys = %#v, want prompt and interrupt", client.SentKeys)
+	}
+	if got := client.SentKeys[len(client.SentKeys)-1].Keys[0]; got != "C-c" {
+		t.Fatalf("last sent key = %q, want C-c interrupt", got)
 	}
 }
 

@@ -69,10 +69,6 @@ func Run(ctx context.Context, options Options) (Result, error) {
 	if err != nil {
 		return Result{}, err
 	}
-	info, err := session.EnsurePaneContext(ctx, options.Tmux, paths, options.Pane)
-	if err != nil {
-		return Result{ClientID: options.ClientID, Pane: options.Pane, CommandID: options.CommandID}, err
-	}
 
 	clientID, err := resolvedClientID(options.ClientID)
 	if err != nil {
@@ -115,6 +111,11 @@ func Run(ctx context.Context, options Options) (Result, error) {
 				return result, nil
 			}
 		}
+	}
+
+	info, err := session.EnsurePaneContext(ctx, options.Tmux, paths, options.Pane)
+	if err != nil {
+		return result, err
 	}
 
 	script := buildScript(options, commandID, paths.Workspace)

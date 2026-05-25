@@ -11,8 +11,11 @@ func TestDetectDangerousCommands(t *testing.T) {
 		{"git", "clean", "-fdx"},
 		{"sudo", "-E", "rm", "-rf", "dist"},
 		{"sudo", "--preserve-env", "rm", "-rf", "dist"},
+		{"sudo", "-Eu", "root", "rm", "-rf", "dist"},
 		{"git", "-C", "repo", "reset", "--hard"},
 		{"git", "-c", "x=y", "clean", "-fdx"},
+		{"sh", "-c", "rm -rf dist"},
+		{"bash", "-lc", "git reset --hard"},
 		{"npm", "uninstall", "react"},
 		{"brew", "uninstall", "node"},
 		{"mv", "build", "dist"},
@@ -55,6 +58,8 @@ func TestAnalyzeStdinScansCommandSegments(t *testing.T) {
 		"true && git reset --hard",
 		"false || git clean -fdx",
 		"cat files.txt | rm -rf dist",
+		"sh -c 'rm -rf dist'",
+		`bash -lc "git reset --hard"`,
 	}
 	for _, script := range cases {
 		if res := Analyze(nil, script); !res.Dangerous {

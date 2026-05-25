@@ -67,6 +67,9 @@ func Request(ctx context.Context, options Options) (Decision, error) {
 			return fmt.Errorf("send permission prompt: %v", err)
 		}
 		decision, err = waitForResponse(ctx, responsePath, timeout(options.Timeout), poll(options.PollInterval))
+		if decision == TimedOut {
+			interruptPermissionPrompt(options.Tmux, info.PaneID)
+		}
 		return err
 	})
 	if err != nil {
@@ -103,13 +106,16 @@ func promptCommand(options Options, responsePath string) string {
 func promptReadTimeoutSeconds(value time.Duration) int {
 	duration := timeout(value)
 	seconds := int(duration / time.Second)
-	if duration%time.Second != 0 {
-		seconds++
-	}
 	if seconds < 1 {
 		return 1
 	}
 	return seconds
+}
+
+func interruptPermissionPrompt(client tmux.Client, paneID string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	_ = client.SendKeys(ctx, paneID, "C-c")
 }
 
 func writePrintf(b *strings.Builder, format string, args ...string) {

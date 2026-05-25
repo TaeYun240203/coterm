@@ -21,7 +21,7 @@ func Analyze(argv []string, stdin string) Analysis {
 			continue
 		}
 		for _, segment := range splitCommandSegments(line) {
-			if res := analyzeCommand(strings.Fields(segment)); res.Dangerous {
+			if res := analyzeCommand(shellFields(segment)); res.Dangerous {
 				return res
 			}
 		}
@@ -77,6 +77,56 @@ func splitCommandSegments(line string) []string {
 	return segments
 }
 
+func shellFields(line string) []string {
+	var fields []string
+	var b strings.Builder
+	inSingle := false
+	inDouble := false
+	escaped := false
+	haveField := false
+
+	flush := func() {
+		if haveField {
+			fields = append(fields, b.String())
+			b.Reset()
+			haveField = false
+		}
+	}
+
+	for i := 0; i < len(line); i++ {
+		ch := line[i]
+		if escaped {
+			b.WriteByte(ch)
+			haveField = true
+			escaped = false
+			continue
+		}
+		if ch == '\\' && !inSingle {
+			escaped = true
+			haveField = true
+			continue
+		}
+		if ch == '\'' && !inDouble {
+			inSingle = !inSingle
+			haveField = true
+			continue
+		}
+		if ch == '"' && !inSingle {
+			inDouble = !inDouble
+			haveField = true
+			continue
+		}
+		if (ch == ' ' || ch == '\t' || ch == '\r' || ch == '\n') && !inSingle && !inDouble {
+			flush()
+			continue
+		}
+		b.WriteByte(ch)
+		haveField = true
+	}
+	flush()
+	return fields
+}
+
 func analyzeCommand(argv []string) Analysis {
 	argv = normalizePrefix(argv)
 	if len(argv) == 0 {
@@ -103,6 +153,8 @@ func analyzeCommand(argv []string) Analysis {
 		}
 	case "git":
 		return analyzeGit(argv[1:])
+	case "sh", "bash", "dash", "zsh", "ksh":
+		return analyzeShell(argv[1:])
 	case "npm", "pnpm":
 		return analyzePackage(cmd, argv[1:], []string{"uninstall", "remove", "rm"})
 	case "yarn":
@@ -143,18 +195,18 @@ func stripWrapperOptions(args []string) []string {
 			return args
 		}
 		args = args[1:]
-		if wrapperOptionTakesValue(arg) && !strings.Contains(arg, "=") && len(args) > 0 {
+		if wrapperOptionNeedsNextValue(arg) && len(args) > 0 {
 			args = args[1:]
 		}
 	}
 	return args
 }
 
-func wrapperOptionTakesValue(arg string) bool {
+func wrapperOptionNeedsNextValue(arg string) bool {
 	if strings.HasPrefix(arg, "--") {
 		name := strings.TrimPrefix(arg, "--")
 		if idx := strings.IndexByte(name, '='); idx >= 0 {
-			name = name[:idx]
+			return false
 		}
 		switch name {
 		case "chdir", "close-from", "group", "host", "login-class", "prompt", "role", "type", "user":
@@ -163,12 +215,13 @@ func wrapperOptionTakesValue(arg string) bool {
 			return false
 		}
 	}
-	switch arg {
-	case "-C", "-D", "-g", "-h", "-p", "-T", "-t", "-U", "-u":
-		return true
-	default:
-		return false
+	valueOptions := "CDghpTtUu"
+	for i := 1; i < len(arg); i++ {
+		if strings.ContainsRune(valueOptions, rune(arg[i])) {
+			return i == len(arg)-1
+		}
 	}
+	return false
 }
 
 func stripCommandOptions(args []string) []string {
@@ -217,18 +270,18 @@ func stripGitGlobalOptions(args []string) []string {
 			return args
 		}
 		args = args[1:]
-		if gitGlobalOptionTakesValue(arg) && !strings.Contains(arg, "=") && len(args) > 0 {
+		if gitGlobalOptionNeedsNextValue(arg) && len(args) > 0 {
 			args = args[1:]
 		}
 	}
 	return args
 }
 
-func gitGlobalOptionTakesValue(arg string) bool {
+func gitGlobalOptionNeedsNextValue(arg string) bool {
 	if strings.HasPrefix(arg, "--") {
 		name := strings.TrimPrefix(arg, "--")
 		if idx := strings.IndexByte(name, '='); idx >= 0 {
-			name = name[:idx]
+			return false
 		}
 		switch name {
 		case "exec-path", "git-dir", "namespace", "super-prefix", "work-tree":
@@ -237,7 +290,38 @@ func gitGlobalOptionTakesValue(arg string) bool {
 			return false
 		}
 	}
-	return arg == "-C" || arg == "-c"
+	if arg == "-C" || arg == "-c" {
+		return true
+	}
+	return false
+}
+
+func analyzeShell(args []string) Analysis {
+	for len(args) > 0 {
+		arg := args[0]
+		if arg == "--" {
+			args = args[1:]
+			continue
+		}
+		if arg == "-c" {
+			if len(args) < 2 {
+				return Analysis{}
+			}
+			return Analyze(nil, args[1])
+		}
+		if strings.HasPrefix(arg, "-") && strings.Contains(arg[1:], "c") {
+			if len(args) < 2 {
+				return Analysis{}
+			}
+			return Analyze(nil, args[1])
+		}
+		if strings.HasPrefix(arg, "-") {
+			args = args[1:]
+			continue
+		}
+		return Analysis{}
+	}
+	return Analysis{}
 }
 
 func analyzePackage(cmd string, args []string, destructive []string) Analysis {
