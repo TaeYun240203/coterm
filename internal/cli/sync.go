@@ -10,7 +10,6 @@ import (
 
 	"github.com/coterm/coterm/internal/cursor"
 	"github.com/coterm/coterm/internal/session"
-	"github.com/coterm/coterm/internal/state"
 )
 
 func (app App) sync(ctx context.Context, args []string, stdout io.Writer) int {
@@ -28,59 +27,72 @@ func (app App) sync(ctx context.Context, args []string, stdout io.Writer) int {
 	if err != nil {
 		return WriteJSON(stdout, Result{OK: false, Error: err.Error()})
 	}
-	clientState, err := loadClientState(paths, *clientFlag)
-	if err != nil {
-		return WriteJSON(stdout, Result{OK: false, Error: err.Error()})
-	}
-	panes, err := session.ListMappedPanesContext(ctx, app.tmuxClient(), paths)
+	clientID, err := clientIDFromFlag(*clientFlag)
 	if err != nil {
 		return WriteJSON(stdout, Result{OK: false, Error: err.Error()})
 	}
 
-	names := sortedPaneNames(panes)
-	changed := make([]string, 0, len(names))
-	deltas := make(map[string]string)
-	external := false
-	for _, name := range names {
-		if isInternalPaneName(name) {
-			continue
-		}
-		captured, err := app.tmuxClient().CapturePane(ctx, panes[name])
+	var result Result
+	if err := cursor.WithClientLock(ctx, paths, clientID, func() error {
+		clientState, err := cursor.LoadClientState(paths, clientID)
 		if err != nil {
-			return WriteJSON(stdout, Result{OK: false, ClientID: clientState.ClientID, Error: fmt.Sprintf("capture pane %s: %v", name, err)})
+			return err
 		}
-		delta, next, paneExternal := cursor.Delta(clientState.Cursors[name], captured)
-		clientState.Cursors[name] = next
-		if paneExternal {
-			external = true
+		panes, err := session.ListMappedPanesContext(ctx, app.tmuxClient(), paths)
+		if err != nil {
+			return err
 		}
-		if delta != "" {
-			changed = append(changed, name)
-			deltas[name] = delta
+
+		names := sortedPaneNames(panes)
+		changed := make([]string, 0, len(names))
+		deltas := make(map[string]string)
+		external := false
+		for _, name := range names {
+			if isInternalPaneName(name) {
+				continue
+			}
+			captured, err := app.tmuxClient().CapturePane(ctx, panes[name])
+			if err != nil {
+				return fmt.Errorf("capture pane %s: %v", name, err)
+			}
+			delta, next, paneExternal := cursor.Delta(clientState.Cursors[name], captured)
+			clientState.Cursors[name] = next
+			if paneExternal {
+				external = true
+			}
+			if delta != "" {
+				changed = append(changed, name)
+				deltas[name] = delta
+			}
 		}
-	}
-	if err := cursor.SaveClientState(paths, clientState); err != nil {
-		return WriteJSON(stdout, Result{OK: false, ClientID: clientState.ClientID, Error: err.Error()})
+		if err := cursor.SaveClientState(paths, clientState); err != nil {
+			return err
+		}
+
+		result = Result{
+			OK:                      true,
+			ClientID:                clientState.ClientID,
+			ChangedPanes:            changed,
+			OutputDeltas:            deltas,
+			ExternalChangesDetected: external,
+		}
+		return nil
+	}); err != nil {
+		return WriteJSON(stdout, Result{OK: false, ClientID: clientID, Error: err.Error()})
 	}
 
-	return WriteJSON(stdout, Result{
-		OK:                      true,
-		ClientID:                clientState.ClientID,
-		ChangedPanes:            changed,
-		OutputDeltas:            deltas,
-		ExternalChangesDetected: external,
-	})
+	return WriteJSON(stdout, result)
 }
 
-func loadClientState(paths state.Paths, clientID string) (cursor.ClientState, error) {
+func clientIDFromFlag(clientID string) (string, error) {
 	if clientID == "" {
 		var err error
 		clientID, err = cursor.NewClientID()
 		if err != nil {
-			return cursor.ClientState{}, err
+			return "", err
 		}
 	}
-	return cursor.LoadClientState(paths, clientID)
+	return clientID, nil
 }
 
 func sortedPaneNames(panes map[string]string) []string {

@@ -122,6 +122,26 @@ func TestSaveAndLoadTOML(t *testing.T) {
 	}
 }
 
+func TestSaveTOMLDoesNotUseFixedTempPath(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.toml")
+	if err := os.Mkdir(path+".tmp", 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := SaveTOML(path, testConfig{Name: "demo", Count: 2}); err != nil {
+		t.Fatalf("SaveTOML returned error with occupied fixed temp path: %v", err)
+	}
+
+	var out testConfig
+	if err := LoadTOML(path, &out); err != nil {
+		t.Fatal(err)
+	}
+	if out != (testConfig{Name: "demo", Count: 2}) {
+		t.Fatalf("loaded config = %#v", out)
+	}
+}
+
 func TestSaveAndLoadPaneState(t *testing.T) {
 	st, err := Ensure(t.TempDir())
 	if err != nil {

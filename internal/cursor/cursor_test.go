@@ -1,6 +1,14 @@
 package cursor
 
-import "testing"
+import (
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"unicode/utf8"
+
+	"github.com/coterm/coterm/internal/state"
+)
 
 func TestDeltaFromLineCount(t *testing.T) {
 	old := Cursor{LineCount: 2}
@@ -24,4 +32,59 @@ func TestSnapshotTailTruncatesFromHead(t *testing.T) {
 	if out != "3\n4\n5\n" {
 		t.Fatalf("tail = %q", out)
 	}
+}
+
+func TestTailByteTruncationStartsAtUTF8Boundary(t *testing.T) {
+	out, truncated := Tail("a🙂b", -1, 4)
+	if !truncated {
+		t.Fatal("expected truncation")
+	}
+	if out != "b" {
+		t.Fatalf("tail = %q, want %q", out, "b")
+	}
+	if !utf8.ValidString(out) {
+		t.Fatalf("tail is not valid UTF-8: %q", out)
+	}
+}
+
+func TestLoadClientStateRejectsMismatchedClientID(t *testing.T) {
+	paths := mustCursorStatePaths(t)
+	if err := state.SaveTOML(ClientPath(paths, "cl_requested"), ClientState{
+		ClientID: "cl_other",
+		Cursors:  map[string]Cursor{"main1": {LineCount: 3}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := LoadClientState(paths, "cl_requested")
+	if err == nil {
+		t.Fatal("LoadClientState returned nil error for mismatched client_id")
+	}
+	if !strings.Contains(err.Error(), "cl_other") || !strings.Contains(err.Error(), "cl_requested") {
+		t.Fatalf("error = %q, want both client ids", err)
+	}
+}
+
+func TestLoadClientStateRejectsMalformedTOML(t *testing.T) {
+	paths := mustCursorStatePaths(t)
+	if err := os.WriteFile(ClientPath(paths, "cl_bad"), []byte("client_id = \n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := LoadClientState(paths, "cl_bad"); err == nil {
+		t.Fatal("LoadClientState returned nil error for malformed TOML")
+	}
+}
+
+func mustCursorStatePaths(t *testing.T) state.Paths {
+	t.Helper()
+	root := t.TempDir()
+	paths, err := state.Ensure(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(ClientPath(paths, "cl_test")), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return paths
 }

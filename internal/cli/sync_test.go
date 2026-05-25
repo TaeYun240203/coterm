@@ -4,11 +4,14 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 
 	"github.com/coterm/coterm/internal/session"
 	"github.com/coterm/coterm/internal/state"
@@ -104,6 +107,114 @@ func TestReadReturnsOnlyRequestedPaneDelta(t *testing.T) {
 	}
 }
 
+func TestReadRecoversWhenSavedCursorIsPastCapture(t *testing.T) {
+	app, fake, workspace := NewTestApp(t)
+	paths := mustStatePaths(t, workspace)
+	sessionName := session.SessionName(paths.Workspace)
+	fake.Sessions[sessionName] = true
+	fake.Panes = []tmux.Pane{{ID: "%1", Active: true, Command: "zsh"}}
+	savePaneState(t, paths, []state.PaneRecord{
+		{Name: "main1", TmuxID: "%1", Created: "2026-05-26T01:02:03Z", LastSeen: "2026-05-26T01:02:03Z"},
+	})
+	fake.Captures["%1"] = "fresh\n"
+	writeClientState(t, paths, "cl_test", map[string]int{"main1": 5})
+
+	result := runJSON(t, app, []string{"read", "--client", "cl_test", "--pane", "main1"})
+	if !result.OK {
+		t.Fatalf("OK = false in result: %+v", result)
+	}
+	if !result.ExternalChangesDetected {
+		t.Fatal("expected external changes to be detected")
+	}
+	if result.OutputDelta != "fresh\n" {
+		t.Fatalf("output_delta = %q", result.OutputDelta)
+	}
+	stateAfter := readClientState(t, paths, "cl_test")
+	if stateAfter.Cursors["main1"].LineCount != 1 {
+		t.Fatalf("main1 line count = %d", stateAfter.Cursors["main1"].LineCount)
+	}
+}
+
+func TestReadCaptureFailureDoesNotAdvanceCursor(t *testing.T) {
+	captureErr := errors.New("capture failed")
+	app, fake, workspace := NewTestApp(t)
+	paths := mustStatePaths(t, workspace)
+	sessionName := session.SessionName(paths.Workspace)
+	fake.Sessions[sessionName] = true
+	fake.Panes = []tmux.Pane{{ID: "%1", Active: true, Command: "zsh"}}
+	savePaneState(t, paths, []state.PaneRecord{
+		{Name: "main1", TmuxID: "%1", Created: "2026-05-26T01:02:03Z", LastSeen: "2026-05-26T01:02:03Z"},
+	})
+	writeClientState(t, paths, "cl_test", map[string]int{"main1": 2})
+	app.Tmux = &captureFailClient{Fake: fake, err: captureErr}
+
+	result := runJSON(t, app, []string{"read", "--client", "cl_test", "--pane", "main1"})
+	if result.OK {
+		t.Fatalf("OK = true in result: %+v", result)
+	}
+	if !strings.Contains(result.Error, captureErr.Error()) {
+		t.Fatalf("error = %q, want capture error", result.Error)
+	}
+	stateAfter := readClientState(t, paths, "cl_test")
+	if stateAfter.Cursors["main1"].LineCount != 2 {
+		t.Fatalf("main1 line count = %d", stateAfter.Cursors["main1"].LineCount)
+	}
+}
+
+func TestReadCapturesWhileClientLockIsHeld(t *testing.T) {
+	app, fake, workspace := NewTestApp(t)
+	paths := mustStatePaths(t, workspace)
+	sessionName := session.SessionName(paths.Workspace)
+	fake.Sessions[sessionName] = true
+	fake.Panes = []tmux.Pane{{ID: "%1", Active: true, Command: "zsh"}}
+	savePaneState(t, paths, []state.PaneRecord{
+		{Name: "main1", TmuxID: "%1", Created: "2026-05-26T01:02:03Z", LastSeen: "2026-05-26T01:02:03Z"},
+	})
+	fake.Captures["%1"] = "a\nb\n"
+	writeClientState(t, paths, "cl_test", map[string]int{"main1": 1})
+	client := &lockCheckingCaptureClient{
+		Fake:     fake,
+		lockPath: filepath.Join(paths.ClientsDir, "cl_test.lock"),
+	}
+	app.Tmux = client
+
+	result := runJSON(t, app, []string{"read", "--client", "cl_test", "--pane", "main1"})
+	if !result.OK {
+		t.Fatalf("OK = false in result: %+v", result)
+	}
+	if !client.checked {
+		t.Fatal("CapturePane was not called")
+	}
+}
+
+func TestReadWaitsForSameClientLock(t *testing.T) {
+	app, fake, workspace := NewTestApp(t)
+	paths := mustStatePaths(t, workspace)
+	sessionName := session.SessionName(paths.Workspace)
+	fake.Sessions[sessionName] = true
+	fake.Panes = []tmux.Pane{{ID: "%1", Active: true, Command: "zsh"}}
+	savePaneState(t, paths, []state.PaneRecord{
+		{Name: "main1", TmuxID: "%1", Created: "2026-05-26T01:02:03Z", LastSeen: "2026-05-26T01:02:03Z"},
+	})
+	fake.Captures["%1"] = "a\nb\n"
+	writeClientState(t, paths, "cl_test", map[string]int{"main1": 1})
+	holdClientLock(t, paths, "cl_test")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
+	defer cancel()
+	result := runJSONWithContext(t, app, ctx, []string{"read", "--client", "cl_test", "--pane", "main1"})
+	if result.OK {
+		t.Fatalf("OK = true while client lock was held: %+v", result)
+	}
+	if !strings.Contains(result.Error, context.DeadlineExceeded.Error()) {
+		t.Fatalf("error = %q, want context deadline exceeded", result.Error)
+	}
+	stateAfter := readClientState(t, paths, "cl_test")
+	if stateAfter.Cursors["main1"].LineCount != 1 {
+		t.Fatalf("main1 line count = %d", stateAfter.Cursors["main1"].LineCount)
+	}
+}
+
 func TestSnapshotReturnsTailAndAdvancesCursorToFullCapture(t *testing.T) {
 	app, fake, workspace := NewTestApp(t)
 	paths := mustStatePaths(t, workspace)
@@ -149,8 +260,13 @@ func savePaneState(t *testing.T, paths state.Paths, panes []state.PaneRecord) {
 
 func runJSON(t *testing.T, app *App, args []string) Result {
 	t.Helper()
+	return runJSONWithContext(t, app, context.Background(), args)
+}
+
+func runJSONWithContext(t *testing.T, app *App, ctx context.Context, args []string) Result {
+	t.Helper()
 	var stdout bytes.Buffer
-	code := app.Main(context.Background(), args, nil, &stdout, io.Discard)
+	code := app.Main(ctx, args, nil, &stdout, io.Discard)
 	var result Result
 	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
 		t.Fatalf("expected JSON result, got code %d output %q: %v", code, stdout.String(), err)
@@ -162,6 +278,65 @@ func runJSON(t *testing.T, app *App, args []string) Result {
 		t.Fatalf("code = 0 for error result %+v", result)
 	}
 	return result
+}
+
+type captureFailClient struct {
+	*tmux.Fake
+	err error
+}
+
+func (c *captureFailClient) CapturePane(ctx context.Context, paneID string) (string, error) {
+	_ = ctx
+	_ = paneID
+	return "", c.err
+}
+
+type lockCheckingCaptureClient struct {
+	*tmux.Fake
+	lockPath string
+	checked  bool
+}
+
+func (c *lockCheckingCaptureClient) CapturePane(ctx context.Context, paneID string) (string, error) {
+	c.checked = true
+	if err := requireClientLockHeld(c.lockPath); err != nil {
+		return "", err
+	}
+	return c.Fake.CapturePane(ctx, paneID)
+}
+
+func holdClientLock(t *testing.T, paths state.Paths, clientID string) {
+	t.Helper()
+	file, err := os.OpenFile(filepath.Join(paths.ClientsDir, clientID+".lock"), os.O_CREATE|os.O_RDWR, 0o644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := syscall.Flock(int(file.Fd()), syscall.LOCK_EX); err != nil {
+		_ = file.Close()
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = syscall.Flock(int(file.Fd()), syscall.LOCK_UN)
+		_ = file.Close()
+	})
+}
+
+func requireClientLockHeld(lockPath string) error {
+	file, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0o644)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+
+	err = syscall.Flock(int(file.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
+	if err == nil {
+		_ = syscall.Flock(int(file.Fd()), syscall.LOCK_UN)
+		return errors.New("client lock was not held")
+	}
+	if errors.Is(err, syscall.EWOULDBLOCK) || errors.Is(err, syscall.EAGAIN) {
+		return nil
+	}
+	return err
 }
 
 type testClientState struct {
