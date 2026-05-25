@@ -27,6 +27,55 @@ func SessionName(workspace string) string {
 	return "coterm_" + hex.EncodeToString(sum[:])[:16]
 }
 
+func EnsureSession(client tmux.Client, paths state.Paths) (string, error) {
+	return EnsureSessionContext(context.Background(), client, paths)
+}
+
+func EnsureSessionContext(ctx context.Context, client tmux.Client, paths state.Paths) (string, error) {
+	var sessionName string
+	err := withSessionLock(ctx, paths, func() error {
+		var err error
+		sessionName, err = ensureSessionLocked(ctx, client, paths)
+		return err
+	})
+	if err != nil {
+		return "", err
+	}
+	return sessionName, nil
+}
+
+func ListMappedPanes(client tmux.Client, paths state.Paths) (map[string]string, error) {
+	return ListMappedPanesContext(context.Background(), client, paths)
+}
+
+func ListMappedPanesContext(ctx context.Context, client tmux.Client, paths state.Paths) (map[string]string, error) {
+	var panes map[string]string
+	err := withSessionLock(ctx, paths, func() error {
+		sessionName, err := ensureSessionLocked(ctx, client, paths)
+		if err != nil {
+			return err
+		}
+		paneState, err := loadPaneState(paths)
+		if err != nil {
+			return err
+		}
+		tmuxPanes, err := client.ListPanes(ctx, sessionName)
+		if err != nil {
+			return err
+		}
+		reconciledPanes, reconciledState, changed := reconcilePaneMappings(paneState, tmuxPanes)
+		panes = reconciledPanes
+		if changed {
+			return state.SavePaneState(paths, reconciledState)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return panes, nil
+}
+
 func EnsurePane(client tmux.Client, paths state.Paths, paneName string) (PaneInfo, error) {
 	return EnsurePaneContext(context.Background(), client, paths, paneName)
 }
@@ -49,15 +98,9 @@ func EnsurePaneContext(ctx context.Context, client tmux.Client, paths state.Path
 }
 
 func ensurePaneLocked(ctx context.Context, client tmux.Client, paths state.Paths, paneName string) (PaneInfo, error) {
-	sessionName := SessionName(paths.Workspace)
-	hasSession, err := client.HasSession(ctx, sessionName)
+	sessionName, err := ensureSessionLocked(ctx, client, paths)
 	if err != nil {
 		return PaneInfo{}, err
-	}
-	if !hasSession {
-		if err := client.NewSession(ctx, sessionName, paths.Workspace); err != nil {
-			return PaneInfo{}, err
-		}
 	}
 
 	paneState, err := loadPaneState(paths)
@@ -114,6 +157,20 @@ func ensurePaneLocked(ctx context.Context, client tmux.Client, paths state.Paths
 		PaneID:      created.ID,
 		Created:     true,
 	}, nil
+}
+
+func ensureSessionLocked(ctx context.Context, client tmux.Client, paths state.Paths) (string, error) {
+	sessionName := SessionName(paths.Workspace)
+	hasSession, err := client.HasSession(ctx, sessionName)
+	if err != nil {
+		return "", err
+	}
+	if !hasSession {
+		if err := client.NewSession(ctx, sessionName, paths.Workspace); err != nil {
+			return "", err
+		}
+	}
+	return sessionName, nil
 }
 
 func withSessionLock(ctx context.Context, paths state.Paths, fn func() error) error {
@@ -184,6 +241,23 @@ func livePaneIDs(panes []tmux.Pane) map[string]bool {
 		live[pane.ID] = true
 	}
 	return live
+}
+
+func reconcilePaneMappings(paneState state.PaneState, tmuxPanes []tmux.Pane) (map[string]string, state.PaneState, bool) {
+	livePanes := livePaneIDs(tmuxPanes)
+	panes := make(map[string]string)
+	reconciled := state.PaneState{Panes: make([]state.PaneRecord, 0, len(paneState.Panes))}
+	changed := false
+
+	for _, record := range paneState.Panes {
+		if !livePanes[record.TmuxID] {
+			changed = true
+			continue
+		}
+		panes[record.Name] = record.TmuxID
+		reconciled.Panes = append(reconciled.Panes, record)
+	}
+	return panes, reconciled, changed
 }
 
 func findPaneRecord(paneState state.PaneState, paneName string) int {

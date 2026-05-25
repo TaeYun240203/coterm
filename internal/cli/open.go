@@ -11,7 +11,11 @@ import (
 )
 
 func (app App) open(ctx context.Context, stdout io.Writer) int {
-	_, sessionName, err := app.ensureWorkspaceSession(ctx)
+	paths, err := app.workspaceStatePaths()
+	if err != nil {
+		return WriteJSON(stdout, Result{OK: false, Error: err.Error()})
+	}
+	sessionName, err := session.EnsureSessionContext(ctx, app.tmuxClient(), paths)
 	if err != nil {
 		return WriteJSON(stdout, Result{OK: false, Error: err.Error()})
 	}
@@ -21,29 +25,18 @@ func (app App) open(ctx context.Context, stdout io.Writer) int {
 	return 0
 }
 
-func (app App) ensureWorkspaceSession(ctx context.Context) (state.Paths, string, error) {
+func (app App) workspaceStatePaths() (state.Paths, error) {
 	root, err := app.cwd()
 	if err != nil {
-		return state.Paths{}, "", err
+		return state.Paths{}, err
 	}
 	workspaceRoot, err := workspace.FindRoot(root)
 	if err != nil {
-		return state.Paths{}, "", err
+		return state.Paths{}, err
 	}
 	paths, err := state.Ensure(workspaceRoot)
 	if err != nil {
-		return state.Paths{}, "", err
+		return state.Paths{}, err
 	}
-	sessionName := session.SessionName(paths.Workspace)
-	client := app.tmuxClient()
-	hasSession, err := client.HasSession(ctx, sessionName)
-	if err != nil {
-		return state.Paths{}, "", err
-	}
-	if !hasSession {
-		if err := client.NewSession(ctx, sessionName, paths.Workspace); err != nil {
-			return state.Paths{}, "", err
-		}
-	}
-	return paths, sessionName, nil
+	return paths, nil
 }

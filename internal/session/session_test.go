@@ -276,6 +276,129 @@ func TestEnsureSerializesWorkspaceReconciliation(t *testing.T) {
 	}
 }
 
+func TestEnsureSessionUsesWorkspaceLock(t *testing.T) {
+	root := t.TempDir()
+	paths, err := state.Ensure(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := &recordingClient{}
+	lockHeld := make(chan struct{})
+	releaseLock := make(chan struct{})
+	lockErrs := make(chan error, 1)
+
+	go func() {
+		lockErrs <- withSessionLock(context.Background(), paths, func() error {
+			close(lockHeld)
+			<-releaseLock
+			return nil
+		})
+	}()
+	<-lockHeld
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
+	defer cancel()
+	if _, err := EnsureSessionContext(ctx, client, paths); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("EnsureSessionContext error = %v, want context deadline exceeded", err)
+	}
+	if client.calls != 0 {
+		t.Fatalf("tmux calls while waiting for lock = %d, want 0", client.calls)
+	}
+
+	close(releaseLock)
+	if err := <-lockErrs; err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestListMappedPanesDropsStaleRecords(t *testing.T) {
+	root := t.TempDir()
+	paths, err := state.Ensure(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sessionName := SessionName(paths.Workspace)
+	fake := tmux.NewFake()
+	fake.Sessions[sessionName] = true
+	fake.PanesBySession[sessionName] = []tmux.Pane{{ID: "%8", Active: true, Command: "zsh"}}
+	if err := state.SavePaneState(paths, state.PaneState{
+		Panes: []state.PaneRecord{{
+			Name:     "main1",
+			TmuxID:   "%7",
+			Created:  "2026-05-26T01:02:03Z",
+			LastSeen: "2026-05-26T01:02:03Z",
+		}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	panes, err := ListMappedPanes(fake, paths)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(panes) != 0 {
+		t.Fatalf("mapped panes = %+v, want no stale panes", panes)
+	}
+	paneState, err := state.LoadPaneState(paths)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(paneState.Panes) != 0 {
+		t.Fatalf("saved pane records = %+v, want none", paneState.Panes)
+	}
+}
+
+func TestListMappedPanesSerializesReconciliation(t *testing.T) {
+	root := t.TempDir()
+	paths, err := state.Ensure(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := newSlowListPanesClient([]tmux.Pane{{ID: "%7", Active: true, Command: "zsh"}})
+	if err := state.SavePaneState(paths, state.PaneState{
+		Panes: []state.PaneRecord{{
+			Name:     "main1",
+			TmuxID:   "%7",
+			Created:  "2026-05-26T01:02:03Z",
+			LastSeen: "2026-05-26T01:02:03Z",
+		}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	errs := make(chan error, 2)
+	go func() {
+		_, err := ListMappedPanes(client, paths)
+		errs <- err
+	}()
+	<-client.firstListStarted
+
+	go func() {
+		_, err := ListMappedPanes(client, paths)
+		errs <- err
+	}()
+
+	secondReachedList := false
+	select {
+	case <-client.secondListStarted:
+		secondReachedList = true
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(client.releaseFirstList)
+
+	for range 2 {
+		if err := <-errs; err != nil {
+			t.Fatal(err)
+		}
+	}
+	if secondReachedList {
+		t.Fatal("second ListMappedPanes reached ListPanes while first reconciliation was in progress")
+	}
+	if client.listCount() != 2 {
+		t.Fatalf("ListPanes calls = %d, want 2", client.listCount())
+	}
+}
+
 type selectLayoutFailClient struct {
 	*tmux.Fake
 	err error
@@ -473,4 +596,108 @@ func (c *slowSplitClient) splitCount() int {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.splits
+}
+
+type slowListPanesClient struct {
+	mu                sync.Mutex
+	panes             []tmux.Pane
+	lists             int
+	firstListStarted  chan struct{}
+	secondListStarted chan struct{}
+	releaseFirstList  chan struct{}
+}
+
+func newSlowListPanesClient(panes []tmux.Pane) *slowListPanesClient {
+	return &slowListPanesClient{
+		panes:             append([]tmux.Pane(nil), panes...),
+		firstListStarted:  make(chan struct{}),
+		secondListStarted: make(chan struct{}),
+		releaseFirstList:  make(chan struct{}),
+	}
+}
+
+func (c *slowListPanesClient) HasSession(ctx context.Context, session string) (bool, error) {
+	_ = ctx
+	_ = session
+	return true, nil
+}
+
+func (c *slowListPanesClient) NewSession(ctx context.Context, session, cwd string) error {
+	_ = ctx
+	_ = session
+	_ = cwd
+	return nil
+}
+
+func (c *slowListPanesClient) Attach(ctx context.Context, session string) error {
+	_ = ctx
+	_ = session
+	return nil
+}
+
+func (c *slowListPanesClient) ListPanes(ctx context.Context, session string) ([]tmux.Pane, error) {
+	_ = session
+	c.mu.Lock()
+	c.lists++
+	list := c.lists
+	if list == 1 {
+		close(c.firstListStarted)
+	} else if list == 2 {
+		close(c.secondListStarted)
+	}
+	panes := append([]tmux.Pane(nil), c.panes...)
+	c.mu.Unlock()
+
+	if list == 1 {
+		select {
+		case <-c.releaseFirstList:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+	return panes, nil
+}
+
+func (c *slowListPanesClient) SplitWindow(ctx context.Context, session, cwd string) (tmux.Pane, error) {
+	_ = ctx
+	_ = session
+	_ = cwd
+	return tmux.Pane{}, nil
+}
+
+func (c *slowListPanesClient) SelectLayout(ctx context.Context, session, layout string) error {
+	_ = ctx
+	_ = session
+	_ = layout
+	return nil
+}
+
+func (c *slowListPanesClient) SendKeys(ctx context.Context, paneID string, keys ...string) error {
+	_ = ctx
+	_ = paneID
+	_ = keys
+	return nil
+}
+
+func (c *slowListPanesClient) CapturePane(ctx context.Context, paneID string) (string, error) {
+	_ = ctx
+	_ = paneID
+	return "", nil
+}
+
+func (c *slowListPanesClient) KillPane(ctx context.Context, paneID string) error {
+	_ = ctx
+	_ = paneID
+	return nil
+}
+
+func (c *slowListPanesClient) Version(ctx context.Context) (string, error) {
+	_ = ctx
+	return "tmux 3.4", nil
+}
+
+func (c *slowListPanesClient) listCount() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.lists
 }
