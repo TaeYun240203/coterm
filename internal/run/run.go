@@ -14,6 +14,7 @@ import (
 
 	"github.com/coterm/coterm/internal/cursor"
 	"github.com/coterm/coterm/internal/logging"
+	"github.com/coterm/coterm/internal/pane"
 	"github.com/coterm/coterm/internal/permission"
 	"github.com/coterm/coterm/internal/runner"
 	"github.com/coterm/coterm/internal/safety"
@@ -196,6 +197,9 @@ func validateOptions(options Options) error {
 	}
 	if options.Pane == "" {
 		return errors.New("run requires --pane")
+	}
+	if err := pane.ValidateName(options.Pane); err != nil {
+		return err
 	}
 	if options.UseStdin && len(options.Argv) > 0 {
 		return errors.New("--stdin cannot be combined with argv")

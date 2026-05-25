@@ -190,6 +190,31 @@ func TestRunDangerousCommandDeniedDoesNotInjectTargetCommand(t *testing.T) {
 	}
 }
 
+func TestRunRejectsReservedPaneBeforePermissionPrompt(t *testing.T) {
+	client := &permissionAnswerClient{
+		Fake:   tmux.NewFake(),
+		answer: "y",
+	}
+
+	_, err := Run(context.Background(), Options{
+		Workspace: t.TempDir(),
+		Tmux:      client,
+		ClientID:  "cl_test",
+		Pane:      "permission",
+		CommandID: "cmd_delete",
+		Argv:      []string{"rm", "-rf", "dist"},
+	})
+	if err == nil {
+		t.Fatal("expected reserved pane error")
+	}
+	if !strings.Contains(err.Error(), "reserved pane name") {
+		t.Fatalf("error = %q, want reserved pane name", err.Error())
+	}
+	if len(client.SentKeys) != 0 {
+		t.Fatalf("sent keys = %#v, want no permission prompt", client.SentKeys)
+	}
+}
+
 func TestRunFullAccessSkipsDangerousCommandPrompt(t *testing.T) {
 	workspace := t.TempDir()
 	paths, err := state.Ensure(workspace)

@@ -229,7 +229,9 @@ func stripCommandOptions(args []string) []string {
 		switch args[0] {
 		case "--":
 			return args[1:]
-		case "-p", "-v", "-V":
+		case "-v", "-V":
+			return nil
+		case "-p":
 			args = args[1:]
 		default:
 			return args
@@ -251,13 +253,23 @@ func analyzeGit(args []string) Analysis {
 			}
 		}
 	case "clean":
-		joined := strings.Join(args[1:], " ")
-		if strings.Contains(joined, "-fdx") || strings.Contains(joined, "-xdf") ||
-			(hasFlag(args[1:], "-f") && hasFlag(args[1:], "-d") && hasFlag(args[1:], "-x")) {
-			return dangerous("clean git worktree", "git clean -fdx deletes untracked files")
+		if !hasGitCleanDryRun(args[1:]) && hasFlag(args[1:], "-f") {
+			return dangerous("clean git worktree", "git clean deletes untracked files")
 		}
 	}
 	return Analysis{}
+}
+
+func hasGitCleanDryRun(args []string) bool {
+	for _, arg := range args {
+		if arg == "-n" || arg == "--dry-run" {
+			return true
+		}
+		if strings.HasPrefix(arg, "-") && !strings.HasPrefix(arg, "--") && strings.Contains(arg[1:], "n") {
+			return true
+		}
+	}
+	return false
 }
 
 func stripGitGlobalOptions(args []string) []string {

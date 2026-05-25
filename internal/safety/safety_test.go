@@ -9,6 +9,8 @@ func TestDetectDangerousCommands(t *testing.T) {
 		{"chown", "-R", "me", "."},
 		{"git", "reset", "--hard"},
 		{"git", "clean", "-fdx"},
+		{"git", "clean", "-fd"},
+		{"git", "clean", "-f", "-d"},
 		{"sudo", "-E", "rm", "-rf", "dist"},
 		{"sudo", "--preserve-env", "rm", "-rf", "dist"},
 		{"sudo", "-Eu", "root", "rm", "-rf", "dist"},
@@ -30,7 +32,14 @@ func TestDetectDangerousCommands(t *testing.T) {
 }
 
 func TestAllowsOrdinaryCommands(t *testing.T) {
-	for _, args := range [][]string{{"npm", "test"}, {"git", "status"}, {"go", "test", "./..."}} {
+	for _, args := range [][]string{
+		{"npm", "test"},
+		{"git", "status"},
+		{"git", "clean", "-nd"},
+		{"command", "-v", "rm"},
+		{"command", "-V", "rm"},
+		{"go", "test", "./..."},
+	} {
 		if res := Analyze(args, ""); res.Dangerous {
 			t.Fatalf("Analyze(%v) dangerous: %s", args, res.Reason)
 		}
