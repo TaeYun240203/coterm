@@ -297,6 +297,8 @@ func normalizePrefix(argv []string) []string {
 			argv = stripWrapperOptions(argv[1:])
 		case "command":
 			argv = stripCommandOptions(argv[1:])
+		case "env":
+			argv = stripEnvPrefix(argv[1:])
 		default:
 			return argv
 		}
@@ -357,6 +359,72 @@ func stripCommandOptions(args []string) []string {
 		}
 	}
 	return args
+}
+
+func stripEnvPrefix(args []string) []string {
+	for len(args) > 0 {
+		arg := args[0]
+		if arg == "--" {
+			return stripEnvAssignments(args[1:])
+		}
+		if isEnvAssignment(arg) {
+			args = args[1:]
+			continue
+		}
+		if !strings.HasPrefix(arg, "-") || arg == "-" {
+			return stripEnvAssignments(args)
+		}
+		args = args[1:]
+		if envOptionNeedsNextValue(arg) && len(args) > 0 {
+			args = args[1:]
+		}
+	}
+	return nil
+}
+
+func stripEnvAssignments(args []string) []string {
+	for len(args) > 0 && isEnvAssignment(args[0]) {
+		args = args[1:]
+	}
+	return args
+}
+
+func isEnvAssignment(arg string) bool {
+	name, _, ok := strings.Cut(arg, "=")
+	if !ok || name == "" {
+		return false
+	}
+	for i, ch := range name {
+		if i == 0 {
+			if (ch < 'A' || ch > 'Z') && (ch < 'a' || ch > 'z') && ch != '_' {
+				return false
+			}
+			continue
+		}
+		if (ch < 'A' || ch > 'Z') && (ch < 'a' || ch > 'z') && (ch < '0' || ch > '9') && ch != '_' {
+			return false
+		}
+	}
+	return true
+}
+
+func envOptionNeedsNextValue(arg string) bool {
+	if strings.HasPrefix(arg, "--") {
+		name := strings.TrimPrefix(arg, "--")
+		if idx := strings.IndexByte(name, '='); idx >= 0 {
+			return false
+		}
+		switch name {
+		case "chdir", "ignore-signal", "unset":
+			return true
+		default:
+			return false
+		}
+	}
+	if arg == "-C" || arg == "-S" || arg == "-u" {
+		return true
+	}
+	return false
 }
 
 func analyzeGit(args []string) Analysis {

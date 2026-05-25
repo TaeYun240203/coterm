@@ -21,6 +21,10 @@ func TestDetectDangerousCommands(t *testing.T) {
 		{"sh", "-c", "rm -rf dist"},
 		{"bash", "-lc", "git reset --hard"},
 		{"bash", "-o", "pipefail", "-c", "rm -rf dist"},
+		{"env", "rm", "-rf", "dist"},
+		{"env", "-i", "bash", "-lc", "git reset --hard"},
+		{"env", "NODE_ENV=test", "rm", "-rf", "dist"},
+		{"env", "-u", "PATH", "git", "clean", "-fd"},
 		{"npm", "uninstall", "react"},
 		{"brew", "uninstall", "node"},
 		{"mv", "build", "dist"},
@@ -41,6 +45,7 @@ func TestAllowsOrdinaryCommands(t *testing.T) {
 		{"git", "clean", "-nd"},
 		{"command", "-v", "rm"},
 		{"command", "-V", "rm"},
+		{"env", "NODE_ENV=test"},
 		{"go", "test", "./..."},
 	} {
 		if res := Analyze(args, ""); res.Dangerous {
