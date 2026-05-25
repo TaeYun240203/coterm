@@ -1,0 +1,120 @@
+package tmux
+
+import (
+	"bytes"
+	"context"
+	"errors"
+	"fmt"
+	"os/exec"
+	"strings"
+)
+
+type ExecClient struct{}
+
+func NewExec() *ExecClient {
+	return &ExecClient{}
+}
+
+func (ExecClient) HasSession(ctx context.Context, session string) (bool, error) {
+	cmd := exec.CommandContext(ctx, "tmux", "has-session", "-t", session)
+	if err := cmd.Run(); err != nil {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			return false, nil
+		}
+		return false, err
+	}
+	return true, nil
+}
+
+func (c ExecClient) NewSession(ctx context.Context, session, cwd string) error {
+	_, err := c.run(ctx, "new-session", "-d", "-s", session, "-c", cwd)
+	return err
+}
+
+func (c ExecClient) Attach(ctx context.Context, session string) error {
+	_, err := c.run(ctx, "attach-session", "-t", session)
+	return err
+}
+
+func (c ExecClient) ListPanes(ctx context.Context, session string) ([]Pane, error) {
+	out, err := c.run(ctx, "list-panes", "-t", session, "-F", "#{pane_id}\t#{pane_active}\t#{pane_current_command}")
+	if err != nil {
+		return nil, err
+	}
+	out = strings.TrimSuffix(out, "\n")
+	if out == "" {
+		return nil, nil
+	}
+
+	lines := strings.Split(out, "\n")
+	panes := make([]Pane, 0, len(lines))
+	for _, line := range lines {
+		parts := strings.SplitN(line, "\t", 3)
+		if len(parts) != 3 {
+			return nil, fmt.Errorf("unexpected tmux list-panes line: %q", line)
+		}
+		panes = append(panes, Pane{
+			ID:      parts[0],
+			Active:  parts[1] == "1",
+			Command: parts[2],
+		})
+	}
+	return panes, nil
+}
+
+func (c ExecClient) SplitWindow(ctx context.Context, session, cwd string) (Pane, error) {
+	out, err := c.run(ctx, "split-window", "-P", "-F", "#{pane_id}", "-t", session, "-c", cwd)
+	if err != nil {
+		return Pane{}, err
+	}
+	id := strings.TrimSpace(out)
+	if id == "" {
+		return Pane{}, errors.New("tmux split-window returned empty pane id")
+	}
+	return Pane{ID: id, Active: true}, nil
+}
+
+func (c ExecClient) SelectLayout(ctx context.Context, session, layout string) error {
+	_, err := c.run(ctx, "select-layout", "-t", session, layout)
+	return err
+}
+
+func (c ExecClient) SendKeys(ctx context.Context, paneID string, keys ...string) error {
+	args := append([]string{"send-keys", "-t", paneID}, keys...)
+	args = append(args, "Enter")
+	_, err := c.run(ctx, args...)
+	return err
+}
+
+func (c ExecClient) CapturePane(ctx context.Context, paneID string) (string, error) {
+	return c.run(ctx, "capture-pane", "-p", "-J", "-S", "-", "-t", paneID)
+}
+
+func (c ExecClient) KillPane(ctx context.Context, paneID string) error {
+	_, err := c.run(ctx, "kill-pane", "-t", paneID)
+	return err
+}
+
+func (c ExecClient) Version(ctx context.Context) (string, error) {
+	out, err := c.run(ctx, "-V")
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(out), nil
+}
+
+func (ExecClient) run(ctx context.Context, args ...string) (string, error) {
+	cmd := exec.CommandContext(ctx, "tmux", args...)
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		if msg := strings.TrimSpace(stderr.String()); msg != "" {
+			return "", fmt.Errorf("tmux %s: %w: %s", strings.Join(args, " "), err, msg)
+		}
+		return "", fmt.Errorf("tmux %s: %w", strings.Join(args, " "), err)
+	}
+	return stdout.String(), nil
+}
