@@ -11,7 +11,7 @@ import (
 	"github.com/coterm/coterm/internal/workspace"
 )
 
-const Version = "0.1.0"
+var Version = "0.1.0"
 
 func (app App) debug(ctx context.Context, args []string, stdout io.Writer) int {
 	if len(args) != 0 {
