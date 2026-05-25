@@ -35,7 +35,9 @@ func WriteJSON(w io.Writer, result Result) int {
 		fmt.Fprintf(w, `{"ok":false,"error":%q}`+"\n", err.Error())
 		return 1
 	}
-	fmt.Fprintln(w, string(data))
+	if _, err := fmt.Fprintln(w, string(data)); err != nil {
+		return 1
+	}
 	if result.OK {
 		return 0
 	}
