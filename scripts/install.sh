@@ -61,12 +61,15 @@ case "$(uname -m)" in
 esac
 
 version="${COTERM_VERSION:-}"
-if [ -z "$version" ]; then
+if [ -n "$version" ]; then
+  release_path="download/$version"
+else
   version="$(
     curl -fsSL "https://api.github.com/repos/$OWNER/$REPO/releases/latest" \
       | sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' \
       | sed -n '1p'
   )"
+  release_path="latest/download"
 fi
 
 if [ -z "$version" ]; then
@@ -75,7 +78,7 @@ if [ -z "$version" ]; then
 fi
 
 asset="coterm_${version}_${os}_${arch}.tar.gz"
-url="https://github.com/$OWNER/$REPO/releases/latest/download/$asset"
+url="https://github.com/$OWNER/$REPO/releases/$release_path/$asset"
 tmp="$(mktemp -d "${TMPDIR:-/tmp}/coterm-install.XXXXXX")"
 trap 'rm -rf "$tmp"' EXIT INT HUP TERM
 
