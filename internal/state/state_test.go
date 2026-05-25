@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -118,6 +119,30 @@ func TestSaveAndLoadTOML(t *testing.T) {
 	}
 	if out != in {
 		t.Fatalf("loaded config = %#v, want %#v", out, in)
+	}
+}
+
+func TestSaveAndLoadPaneState(t *testing.T) {
+	st, err := Ensure(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	in := PaneState{
+		Panes: []PaneRecord{
+			{Name: "main1", TmuxID: "%1", Created: "2026-05-26T01:02:03Z", LastSeen: "2026-05-26T01:03:04Z"},
+			{Name: "scratch1", TmuxID: "%2", Created: "2026-05-26T02:02:03Z", LastSeen: "2026-05-26T02:03:04Z"},
+		},
+	}
+
+	if err := SavePaneState(st, in); err != nil {
+		t.Fatal(err)
+	}
+	out, err := LoadPaneState(st)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(out, in) {
+		t.Fatalf("loaded pane state = %#v, want %#v", out, in)
 	}
 }
 
