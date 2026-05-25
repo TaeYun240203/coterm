@@ -203,6 +203,31 @@ func TestEnsureCleansUpSplitPaneWhenSelectLayoutFails(t *testing.T) {
 	}
 }
 
+func TestEnsureCleansUpSplitPaneWithFreshContextWhenOperationIsCanceled(t *testing.T) {
+	root := t.TempDir()
+	paths, err := state.Ensure(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	fake := tmux.NewFake()
+	client := &cancelingSelectLayoutClient{Fake: fake, cancel: cancel}
+
+	if _, err := EnsurePaneContext(ctx, client, paths, "main1"); !errors.Is(err, context.Canceled) {
+		t.Fatalf("EnsurePaneContext error = %v, want context.Canceled", err)
+	}
+	if client.killCtxErr != nil {
+		t.Fatalf("KillPane context error = %v, want nil", client.killCtxErr)
+	}
+	if !reflect.DeepEqual(fake.KilledPanes, []string{"%1"}) {
+		t.Fatalf("killed panes = %#v, want [%%1]", fake.KilledPanes)
+	}
+	if len(fake.Panes) != 0 {
+		t.Fatalf("live panes = %#v, want none", fake.Panes)
+	}
+}
+
 func TestEnsureSerializesWorkspaceReconciliation(t *testing.T) {
 	root := t.TempDir()
 	paths, err := state.Ensure(root)
@@ -261,6 +286,27 @@ func (c *selectLayoutFailClient) SelectLayout(ctx context.Context, session, layo
 	_ = session
 	_ = layout
 	return c.err
+}
+
+type cancelingSelectLayoutClient struct {
+	*tmux.Fake
+	cancel     context.CancelFunc
+	killCtxErr error
+}
+
+func (c *cancelingSelectLayoutClient) SelectLayout(ctx context.Context, session, layout string) error {
+	_ = session
+	_ = layout
+	c.cancel()
+	return ctx.Err()
+}
+
+func (c *cancelingSelectLayoutClient) KillPane(ctx context.Context, paneID string) error {
+	c.killCtxErr = ctx.Err()
+	if c.killCtxErr != nil {
+		return c.killCtxErr
+	}
+	return c.Fake.KillPane(ctx, paneID)
 }
 
 type recordingClient struct {

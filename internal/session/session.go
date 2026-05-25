@@ -5,7 +5,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
-	"fmt"
 	"os"
 	"path/filepath"
 	"syscall"
@@ -91,7 +90,7 @@ func ensurePaneLocked(ctx context.Context, client tmux.Client, paths state.Paths
 		return PaneInfo{}, err
 	}
 	if err := client.SelectLayout(ctx, sessionName, "tiled"); err != nil {
-		return PaneInfo{}, cleanupSplitPane(ctx, client, created.ID, err)
+		return PaneInfo{}, cleanupSplitPane(client, created.ID, err)
 	}
 
 	record := state.PaneRecord{
@@ -106,7 +105,7 @@ func ensurePaneLocked(ctx context.Context, client tmux.Client, paths state.Paths
 		paneState.Panes = append(paneState.Panes, record)
 	}
 	if err := state.SavePaneState(paths, paneState); err != nil {
-		return PaneInfo{}, cleanupSplitPane(ctx, client, created.ID, err)
+		return PaneInfo{}, cleanupSplitPane(client, created.ID, err)
 	}
 
 	return PaneInfo{
@@ -159,10 +158,12 @@ func lockFile(ctx context.Context, file *os.File) error {
 	}
 }
 
-func cleanupSplitPane(ctx context.Context, client tmux.Client, paneID string, cause error) error {
-	if err := client.KillPane(ctx, paneID); err != nil {
-		return fmt.Errorf("%w; failed to kill pane %s: %v", cause, paneID, err)
-	}
+func cleanupSplitPane(client tmux.Client, paneID string, cause error) error {
+	cleanupCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	// Cleanup is best-effort; callers should see the operation error that caused it.
+	_ = client.KillPane(cleanupCtx, paneID)
 	return cause
 }
 
