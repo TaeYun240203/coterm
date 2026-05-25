@@ -10,14 +10,16 @@ import (
 )
 
 type App struct {
-	Tmux  tmux.Client
-	Getwd func() (string, error)
+	Tmux        tmux.Client
+	Getwd       func() (string, error)
+	UserHomeDir func() (string, error)
 }
 
 func Main(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	app := App{
-		Tmux:  tmux.NewExec(),
-		Getwd: os.Getwd,
+		Tmux:        tmux.NewExec(),
+		Getwd:       os.Getwd,
+		UserHomeDir: os.UserHomeDir,
 	}
 	return app.Main(ctx, args, stdin, stdout, stderr)
 }
@@ -44,8 +46,12 @@ func (app App) Main(ctx context.Context, args []string, stdin io.Reader, stdout,
 		return app.run(ctx, args[1:], stdin, stdout)
 	case "pane":
 		return app.pane(ctx, args[1:], stdout)
-	case "export", "uninstall", "debug":
-		return WriteJSON(stdout, Result{OK: false, Error: "command not implemented yet"})
+	case "export":
+		return app.export(args[1:], stdout)
+	case "uninstall":
+		return app.uninstall(args[1:], stdout)
+	case "debug":
+		return app.debug(ctx, stdout)
 	case "full-access":
 		return app.fullAccess(args[1:], stdout)
 	default:
@@ -65,4 +71,11 @@ func (app App) cwd() (string, error) {
 		return app.Getwd()
 	}
 	return os.Getwd()
+}
+
+func (app App) homeDir() (string, error) {
+	if app.UserHomeDir != nil {
+		return app.UserHomeDir()
+	}
+	return os.UserHomeDir()
 }

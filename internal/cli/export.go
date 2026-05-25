@@ -1,0 +1,50 @@
+package cli
+
+import (
+	"flag"
+	"io"
+	"os"
+	"path/filepath"
+	"sort"
+
+	"github.com/coterm/coterm/internal/logging"
+)
+
+func (app App) export(args []string, stdout io.Writer) int {
+	flags := flag.NewFlagSet("export", flag.ContinueOnError)
+	flags.SetOutput(io.Discard)
+	format := flags.String("format", "", "export format")
+	if err := flags.Parse(args); err != nil {
+		return WriteJSON(stdout, Result{OK: false, Error: err.Error()})
+	}
+	if flags.NArg() != 0 {
+		return WriteJSON(stdout, Result{OK: false, Error: "export does not accept positional arguments"})
+	}
+	if *format != "jsonl" {
+		return WriteJSON(stdout, Result{OK: false, Error: "export only supports --format jsonl"})
+	}
+	paths, err := app.workspaceStatePaths()
+	if err != nil {
+		return WriteJSON(stdout, Result{OK: false, Error: err.Error()})
+	}
+	files, err := filepath.Glob(filepath.Join(paths.LogsDir, "*.jsonl"))
+	if err != nil {
+		return WriteJSON(stdout, Result{OK: false, Error: err.Error()})
+	}
+	sort.Strings(files)
+	for _, path := range files {
+		if err := streamRedactedFile(path, stdout); err != nil {
+			return WriteJSON(stdout, Result{OK: false, Error: err.Error()})
+		}
+	}
+	return 0
+}
+
+func streamRedactedFile(path string, stdout io.Writer) error {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	_, err = io.WriteString(stdout, logging.Redact(string(data)))
+	return err
+}

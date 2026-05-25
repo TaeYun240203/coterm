@@ -32,7 +32,11 @@ func WriteJSON(w io.Writer, result Result) int {
 	if result.OK {
 		result.Error = ""
 	}
-	data, err := json.Marshal(result)
+	return writeSimpleJSON(w, result, result.OK)
+}
+
+func writeSimpleJSON(w io.Writer, value any, ok bool) int {
+	data, err := json.Marshal(value)
 	if err != nil {
 		fmt.Fprintf(w, `{"ok":false,"error":%q}`+"\n", err.Error())
 		return 1
@@ -40,7 +44,7 @@ func WriteJSON(w io.Writer, result Result) int {
 	if _, err := fmt.Fprintln(w, string(data)); err != nil {
 		return 1
 	}
-	if result.OK {
+	if ok {
 		return 0
 	}
 	return 1

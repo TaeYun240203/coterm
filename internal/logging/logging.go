@@ -24,9 +24,11 @@ type CommandLog struct {
 }
 
 var privateKeyRE = regexp.MustCompile(`(?s)-----BEGIN [^-]*PRIVATE KEY-----.*?-----END [^-]*PRIVATE KEY-----`)
+var embeddedSecretAssignmentRE = regexp.MustCompile(`(?i)\b([A-Za-z0-9_-]*(?:api_key|apikey|secret|token|password|passwd|private_key|privatekey)[A-Za-z0-9_-]*)\s*([=:])\s*([^\s,"'}]+)`)
 
 func Redact(input string) string {
 	redacted := privateKeyRE.ReplaceAllString(input, "[REDACTED PRIVATE KEY]")
+	redacted = embeddedSecretAssignmentRE.ReplaceAllString(redacted, "$1$2 [REDACTED]")
 	lines := strings.SplitAfter(redacted, "\n")
 	for i, line := range lines {
 		lines[i] = redactSecretAssignment(line)
