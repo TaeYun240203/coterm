@@ -1,6 +1,8 @@
 package logging
 
 import (
+	"bytes"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -65,5 +67,53 @@ func TestAppendCommandLogWritesRedactedJSONL(t *testing.T) {
 		if !strings.Contains(got, want) {
 			t.Fatalf("log missing %q: %s", want, got)
 		}
+	}
+}
+
+func TestRedactWriterHandlesLargeJSONLine(t *testing.T) {
+	var input bytes.Buffer
+	input.WriteString(`{"output_delta":"`)
+	input.WriteString(strings.Repeat("x", 11*1024*1024))
+	input.WriteString(`","token":"tok-large"}`)
+	input.WriteByte('\n')
+
+	var output bytes.Buffer
+	if err := RedactWriter(&output, &input); err != nil {
+		t.Fatal(err)
+	}
+	got := output.String()
+	if strings.Contains(got, "tok-large") {
+		t.Fatalf("secret leaked in large JSONL line")
+	}
+	if !strings.Contains(got, `"token":"[REDACTED]"`) {
+		t.Fatalf("large JSONL line was not redacted")
+	}
+}
+
+func TestRedactWriterRejectsInvalidJSONL(t *testing.T) {
+	var output bytes.Buffer
+	err := RedactWriter(&output, strings.NewReader(`{"msg":"ok"}`+"\nnot json\n"))
+	if err == nil {
+		t.Fatal("expected invalid JSONL error")
+	}
+	if !strings.Contains(err.Error(), "invalid JSONL log line 2") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(output.String(), `"msg":"ok"`) {
+		t.Fatalf("expected first valid record before invalid line: %s", output.String())
+	}
+}
+
+func TestRedactWriterAllowsLastLineWithoutNewline(t *testing.T) {
+	var output bytes.Buffer
+	if err := RedactWriter(&output, strings.NewReader(`{"password":"pw"}`)); err != nil {
+		t.Fatal(err)
+	}
+	got, err := io.ReadAll(&output)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(got), "pw") || !strings.Contains(string(got), `"password":"[REDACTED]"`) {
+		t.Fatalf("unexpected output: %s", string(got))
 	}
 }

@@ -192,35 +192,26 @@ func shouldRedactAssignmentKey(key string) bool {
 }
 
 func RedactWriter(dst io.Writer, src io.Reader) error {
-	scanner := bufio.NewScanner(src)
-	scanner.Buffer(make([]byte, 0, 64*1024), 10*1024*1024)
-	inPrivateKey := false
-	for scanner.Scan() {
-		line := scanner.Text()
-		if _, ok := redactJSON([]byte(line)); ok {
-			if _, err := fmt.Fprintln(dst, Redact(line)); err != nil {
-				return err
+	reader := bufio.NewReader(src)
+	lineNumber := 0
+	for {
+		line, err := reader.ReadString('\n')
+		if len(line) > 0 {
+			lineNumber++
+			redacted, ok := redactJSON([]byte(line))
+			if !ok {
+				return fmt.Errorf("invalid JSONL log line %d", lineNumber)
 			}
+			if _, writeErr := fmt.Fprintln(dst, redacted); writeErr != nil {
+				return writeErr
+			}
+		}
+		if err == nil {
 			continue
 		}
-		if inPrivateKey {
-			if strings.Contains(line, "-----END ") && strings.Contains(line, "PRIVATE KEY-----") {
-				inPrivateKey = false
-			}
-			continue
+		if err == io.EOF {
+			return nil
 		}
-		if strings.Contains(line, "-----BEGIN ") && strings.Contains(line, "PRIVATE KEY-----") {
-			if _, err := fmt.Fprintln(dst, "[REDACTED PRIVATE KEY]"); err != nil {
-				return err
-			}
-			if !(strings.Contains(line, "-----END ") && strings.Contains(line, "PRIVATE KEY-----")) {
-				inPrivateKey = true
-			}
-			continue
-		}
-		if _, err := fmt.Fprintln(dst, Redact(line)); err != nil {
-			return err
-		}
+		return err
 	}
-	return scanner.Err()
 }

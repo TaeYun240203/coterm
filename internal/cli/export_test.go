@@ -32,7 +32,7 @@ func TestExportStreamsLogsInLexicalOrderWithRedaction(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(logDir, "b.jsonl"), []byte(`{"msg":"password=hunter2"}`+"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(logDir, "a.jsonl"), []byte("OPENAI_API_KEY=sk-test\n-----BEGIN OPENSSH PRIVATE KEY-----\nabc\n-----END OPENSSH PRIVATE KEY-----\n"+`{"api_key":"sk-json","token":"tok-json"}`+"\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(logDir, "a.jsonl"), []byte(`{"env":"OPENAI_API_KEY=sk-test"}`+"\n"+`{"output_delta":"-----BEGIN OPENSSH PRIVATE KEY-----\nabc\n-----END OPENSSH PRIVATE KEY-----"}`+"\n"+`{"api_key":"sk-json","token":"tok-json"}`+"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(logDir, "c.jsonl"), []byte(`{"output_delta":"-----BEGIN OPENSSH PRIVATE KEY-----\njsonkey\n-----END OPENSSH PRIVATE KEY-----","safe":"ok"}`+"\n"), 0o644); err != nil {
@@ -63,5 +63,60 @@ func TestExportStreamsLogsInLexicalOrderWithRedaction(t *testing.T) {
 	}
 	if strings.Contains(got, "BEGIN OPENSSH PRIVATE KEY") || strings.Contains(got, "END OPENSSH PRIVATE KEY") {
 		t.Fatalf("private key block marker leaked in export: %s", got)
+	}
+}
+
+func TestExportRejectsInvalidJSONLBeforeStreaming(t *testing.T) {
+	app, _, workspace := NewTestApp(t)
+	logDir := filepath.Join(workspace, ".coterm", "logs")
+	if err := os.MkdirAll(logDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(logDir, "a.jsonl"), []byte(`{"msg":"safe"}`+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(logDir, "b.jsonl"), []byte("not json\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var stdout bytes.Buffer
+	code := app.Main(context.Background(), []string{"export", "--format", "jsonl"}, nil, &stdout, io.Discard)
+	if code == 0 {
+		t.Fatalf("expected invalid JSONL failure, output = %s", stdout.String())
+	}
+	got := stdout.String()
+	if strings.Contains(got, `"msg":"safe"`) {
+		t.Fatalf("export streamed partial data before reporting error: %s", got)
+	}
+	if !strings.Contains(got, `"ok":false`) || !strings.Contains(got, "invalid JSONL log line") {
+		t.Fatalf("expected JSON error for invalid JSONL, got %s", got)
+	}
+}
+
+func TestExportRejectsSymlinkedLogFile(t *testing.T) {
+	app, _, workspace := NewTestApp(t)
+	logDir := filepath.Join(workspace, ".coterm", "logs")
+	if err := os.MkdirAll(logDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(workspace, "outside.jsonl")
+	if err := os.WriteFile(target, []byte(`{"msg":"leak"}`+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, filepath.Join(logDir, "a.jsonl")); err != nil {
+		t.Fatal(err)
+	}
+
+	var stdout bytes.Buffer
+	code := app.Main(context.Background(), []string{"export", "--format", "jsonl"}, nil, &stdout, io.Discard)
+	if code == 0 {
+		t.Fatalf("expected symlinked log rejection, output = %s", stdout.String())
+	}
+	got := stdout.String()
+	if strings.Contains(got, "leak") {
+		t.Fatalf("symlink target contents leaked: %s", got)
+	}
+	if !strings.Contains(got, `"ok":false`) || !strings.Contains(got, "non-regular log file") {
+		t.Fatalf("expected non-regular log file error, got %s", got)
 	}
 }
