@@ -18,6 +18,17 @@ type Paths struct {
 	CommandsDir string
 }
 
+type PaneRecord struct {
+	Name     string `toml:"name"`
+	TmuxID   string `toml:"tmux_id"`
+	Created  string `toml:"created"`
+	LastSeen string `toml:"last_seen"`
+}
+
+type PaneState struct {
+	Panes []PaneRecord `toml:"panes"`
+}
+
 func Ensure(root string) (Paths, error) {
 	workspace, err := filepath.Abs(root)
 	if err != nil {
@@ -45,6 +56,18 @@ func Ensure(root string) (Paths, error) {
 		return Paths{}, err
 	}
 	return st, nil
+}
+
+func LoadPaneState(paths Paths) (PaneState, error) {
+	var panes PaneState
+	if err := LoadTOML(paths.PanesFile, &panes); err != nil {
+		return PaneState{}, err
+	}
+	return panes, nil
+}
+
+func SavePaneState(paths Paths, panes PaneState) error {
+	return SaveTOML(paths.PanesFile, panes)
 }
 
 func pathsFor(workspace string) Paths {
