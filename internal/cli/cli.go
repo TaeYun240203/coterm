@@ -51,7 +51,7 @@ func (app App) Main(ctx context.Context, args []string, stdin io.Reader, stdout,
 	case "uninstall":
 		return app.uninstall(args[1:], stdout)
 	case "debug":
-		return app.debug(ctx, stdout)
+		return app.debug(ctx, args[1:], stdout)
 	case "full-access":
 		return app.fullAccess(args[1:], stdout)
 	default:

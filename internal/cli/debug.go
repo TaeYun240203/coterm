@@ -13,7 +13,10 @@ import (
 
 const Version = "0.1.0"
 
-func (app App) debug(ctx context.Context, stdout io.Writer) int {
+func (app App) debug(ctx context.Context, args []string, stdout io.Writer) int {
+	if len(args) != 0 {
+		return WriteJSON(stdout, Result{OK: false, Error: "debug does not accept positional arguments"})
+	}
 	paths, err := app.workspaceStatePathsNoEnsure()
 	if err != nil {
 		return WriteJSON(stdout, Result{OK: false, Error: err.Error()})

@@ -41,10 +41,10 @@ func (app App) export(args []string, stdout io.Writer) int {
 }
 
 func streamRedactedFile(path string, stdout io.Writer) error {
-	data, err := os.ReadFile(path)
+	file, err := os.Open(path)
 	if err != nil {
 		return err
 	}
-	_, err = io.WriteString(stdout, logging.Redact(string(data)))
-	return err
+	defer file.Close()
+	return logging.RedactWriter(stdout, file)
 }

@@ -49,3 +49,14 @@ func TestDebugCLIDoesNotCreateCotermStateOrGitignore(t *testing.T) {
 		t.Fatalf("debug created .gitignore, err = %v", err)
 	}
 }
+
+func TestDebugCLIRejectsPositionalArgs(t *testing.T) {
+	app, _, _ := NewTestApp(t)
+
+	var stdout bytes.Buffer
+	code := app.Main(context.Background(), []string{"debug", "extra"}, nil, &stdout, io.Discard)
+	if code == 0 {
+		t.Fatalf("code = %d output = %s, want failure", code, stdout.String())
+	}
+	assertJSONErrorContains(t, stdout.Bytes(), "debug does not accept")
+}

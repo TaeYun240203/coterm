@@ -17,6 +17,21 @@ func TestRedactSecrets(t *testing.T) {
 	}
 }
 
+func TestRedactJSONSecrets(t *testing.T) {
+	input := `{"api_key":"sk-json","nested":{"token":"tok-json"},"items":[{"password":"pw-json"}],"safe":"ok"}`
+	got := Redact(input)
+	for _, secret := range []string{"sk-json", "tok-json", "pw-json"} {
+		if strings.Contains(got, secret) {
+			t.Fatalf("secret %q leaked in %q", secret, got)
+		}
+	}
+	for _, want := range []string{`"api_key":"[REDACTED]"`, `"token":"[REDACTED]"`, `"password":"[REDACTED]"`, `"safe":"ok"`} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("redacted JSON missing %q: %s", want, got)
+		}
+	}
+}
+
 func TestAppendCommandLogWritesRedactedJSONL(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "commands.jsonl")
 	code := 0
