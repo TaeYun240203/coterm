@@ -8,14 +8,19 @@ import (
 )
 
 type Paths struct {
-	Workspace   string
-	Dir         string
-	SessionFile string
-	PanesFile   string
-	ConfigFile  string
-	ClientsDir  string
-	LogsDir     string
-	CommandsDir string
+	Workspace      string
+	Dir            string
+	SessionFile    string
+	PanesFile      string
+	ConfigFile     string
+	ClientsDir     string
+	LogsDir        string
+	CommandsDir    string
+	PermissionsDir string
+}
+
+type Config struct {
+	FullAccess bool `toml:"full_access"`
 }
 
 type PaneRecord struct {
@@ -47,6 +52,7 @@ func Ensure(root string) (Paths, error) {
 		st.ClientsDir,
 		st.LogsDir,
 		st.CommandsDir,
+		st.PermissionsDir,
 	} {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			return Paths{}, err
@@ -70,17 +76,33 @@ func SavePaneState(paths Paths, panes PaneState) error {
 	return SaveTOML(paths.PanesFile, panes)
 }
 
+func LoadConfig(paths Paths) (Config, error) {
+	var config Config
+	if err := LoadTOML(paths.ConfigFile, &config); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return Config{}, nil
+		}
+		return Config{}, err
+	}
+	return config, nil
+}
+
+func SaveConfig(paths Paths, config Config) error {
+	return SaveTOML(paths.ConfigFile, config)
+}
+
 func pathsFor(workspace string) Paths {
 	dir := filepath.Join(workspace, ".coterm")
 	return Paths{
-		Workspace:   workspace,
-		Dir:         dir,
-		SessionFile: filepath.Join(dir, "session.toml"),
-		PanesFile:   filepath.Join(dir, "panes.toml"),
-		ConfigFile:  filepath.Join(dir, "config.toml"),
-		ClientsDir:  filepath.Join(dir, "clients"),
-		LogsDir:     filepath.Join(dir, "logs"),
-		CommandsDir: filepath.Join(dir, "cache", "commands"),
+		Workspace:      workspace,
+		Dir:            dir,
+		SessionFile:    filepath.Join(dir, "session.toml"),
+		PanesFile:      filepath.Join(dir, "panes.toml"),
+		ConfigFile:     filepath.Join(dir, "config.toml"),
+		ClientsDir:     filepath.Join(dir, "clients"),
+		LogsDir:        filepath.Join(dir, "logs"),
+		CommandsDir:    filepath.Join(dir, "cache", "commands"),
+		PermissionsDir: filepath.Join(dir, "cache", "permissions"),
 	}
 }
 

@@ -84,7 +84,17 @@ func EnsurePaneContext(ctx context.Context, client tmux.Client, paths state.Path
 	if err := pane.ValidateName(paneName); err != nil {
 		return PaneInfo{}, err
 	}
+	return ensurePaneContext(ctx, client, paths, paneName)
+}
 
+func EnsureInternalPaneContext(ctx context.Context, client tmux.Client, paths state.Paths, paneName string) (PaneInfo, error) {
+	if !pane.IsReserved(paneName) {
+		return PaneInfo{}, errors.New("internal pane name must be reserved")
+	}
+	return ensurePaneContext(ctx, client, paths, paneName)
+}
+
+func ensurePaneContext(ctx context.Context, client tmux.Client, paths state.Paths, paneName string) (PaneInfo, error) {
 	var info PaneInfo
 	err := withSessionLock(ctx, paths, func() error {
 		var err error
@@ -254,7 +264,9 @@ func reconcilePaneMappings(paneState state.PaneState, tmuxPanes []tmux.Pane) (ma
 			changed = true
 			continue
 		}
-		panes[record.Name] = record.TmuxID
+		if !pane.IsReserved(record.Name) {
+			panes[record.Name] = record.TmuxID
+		}
 		reconciled.Panes = append(reconciled.Panes, record)
 	}
 	return panes, reconciled, changed

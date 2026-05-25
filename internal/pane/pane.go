@@ -15,11 +15,15 @@ func RecommendedNames() []string {
 }
 
 func ValidateName(name string) error {
-	if name == "permission" || name == "permission1" || strings.HasPrefix(name, "permission-") {
+	if IsReserved(name) {
 		return fmt.Errorf("reserved pane name: %q", name)
 	}
 	if !nameRE.MatchString(name) {
 		return fmt.Errorf("invalid pane name: %q", name)
 	}
 	return nil
+}
+
+func IsReserved(name string) bool {
+	return name == "permission" || name == "permission1" || strings.HasPrefix(name, "permission-")
 }

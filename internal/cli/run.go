@@ -58,11 +58,14 @@ func (app App) run(ctx context.Context, args []string, stdin io.Reader, stdout i
 	})
 	if err != nil {
 		return WriteJSON(stdout, Result{
-			OK:        false,
-			ClientID:  result.ClientID,
-			Pane:      *paneName,
-			CommandID: result.CommandID,
-			Error:     err.Error(),
+			OK:                 false,
+			ClientID:           result.ClientID,
+			Pane:               *paneName,
+			CommandID:          result.CommandID,
+			PermissionRequired: result.PermissionRequired,
+			PermissionDenied:   result.PermissionDenied,
+			PermissionTimedOut: result.PermissionTimedOut,
+			Error:              err.Error(),
 		})
 	}
 
@@ -74,5 +77,8 @@ func (app App) run(ctx context.Context, args []string, stdin io.Reader, stdout i
 		ExitCode:                result.ExitCode,
 		OutputDelta:             result.OutputDelta,
 		ExternalChangesDetected: result.ExternalChangesDetected,
+		PermissionRequired:      result.PermissionRequired,
+		PermissionDenied:        result.PermissionDenied,
+		PermissionTimedOut:      result.PermissionTimedOut,
 	})
 }

@@ -78,6 +78,26 @@ func TestRunRejectsMissingCommandWithoutStdin(t *testing.T) {
 	assertJSONErrorContains(t, stdout.Bytes(), "run requires a command")
 }
 
+func TestRunDangerousCommandDeniedReturnsPermissionFlags(t *testing.T) {
+	app, fake, _ := NewTestApp(t)
+	client := &permissionAnswerCLIClient{Fake: fake, answer: "n"}
+	app.Tmux = client
+
+	var stdout bytes.Buffer
+	code := app.Main(context.Background(), []string{"run", "--client", "cl_cli", "--pane", "main1", "--", "rm", "-rf", "dist"}, nil, &stdout, io.Discard)
+	if code != 0 {
+		t.Fatalf("code = %d output = %s", code, stdout.String())
+	}
+
+	var result Result
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		t.Fatalf("expected JSON result, got %q: %v", stdout.String(), err)
+	}
+	if !result.OK || !result.PermissionRequired || !result.PermissionDenied || result.PermissionTimedOut {
+		t.Fatalf("result = %+v", result)
+	}
+}
+
 func assertJSONErrorContains(t *testing.T, data []byte, want string) {
 	t.Helper()
 	var result Result
@@ -131,4 +151,23 @@ func commandIDFromScript(script string) string {
 		return ""
 	}
 	return match[1]
+}
+
+type permissionAnswerCLIClient struct {
+	*tmux.Fake
+	answer string
+}
+
+func (c *permissionAnswerCLIClient) SendKeys(ctx context.Context, paneID string, keys ...string) error {
+	if err := c.Fake.SendKeys(ctx, paneID, keys...); err != nil {
+		return err
+	}
+	if len(keys) == 0 {
+		return nil
+	}
+	match := regexp.MustCompile(`'([^']+\.response)'`).FindStringSubmatch(keys[0])
+	if len(match) == 2 {
+		return os.WriteFile(match[1], []byte(c.answer), 0o644)
+	}
+	return nil
 }

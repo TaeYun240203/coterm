@@ -9,11 +9,14 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"time"
 
 	"github.com/coterm/coterm/internal/cursor"
 	"github.com/coterm/coterm/internal/logging"
+	"github.com/coterm/coterm/internal/permission"
 	"github.com/coterm/coterm/internal/runner"
+	"github.com/coterm/coterm/internal/safety"
 	"github.com/coterm/coterm/internal/session"
 	"github.com/coterm/coterm/internal/state"
 	"github.com/coterm/coterm/internal/tmux"
@@ -35,6 +38,9 @@ type Options struct {
 	Detach       bool
 	PollInterval time.Duration
 	PollTimeout  time.Duration
+
+	PermissionTimeout      time.Duration
+	PermissionPollInterval time.Duration
 }
 
 type Result struct {
@@ -44,6 +50,9 @@ type Result struct {
 	ExitCode                *int
 	OutputDelta             string
 	ExternalChangesDetected bool
+	PermissionRequired      bool
+	PermissionDenied        bool
+	PermissionTimedOut      bool
 }
 
 var commandIDRE = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
@@ -53,6 +62,10 @@ func Run(ctx context.Context, options Options) (Result, error) {
 		return Result{ClientID: options.ClientID, Pane: options.Pane, CommandID: options.CommandID}, err
 	}
 	paths, err := state.Ensure(options.Workspace)
+	if err != nil {
+		return Result{}, err
+	}
+	config, err := state.LoadConfig(paths)
 	if err != nil {
 		return Result{}, err
 	}
@@ -73,6 +86,35 @@ func Run(ctx context.Context, options Options) (Result, error) {
 		ClientID:  clientID,
 		Pane:      options.Pane,
 		CommandID: commandID,
+	}
+
+	if !config.FullAccess {
+		analysis := safety.Analyze(options.Argv, stdinForAnalysis(options))
+		if analysis.Dangerous {
+			result.PermissionRequired = true
+			decision, err := permission.Request(ctx, permission.Options{
+				Paths:        paths,
+				Tmux:         options.Tmux,
+				Action:       analysis.Action,
+				TargetPane:   options.Pane,
+				CommandID:    commandID,
+				Body:         commandBody(options),
+				Timeout:      options.PermissionTimeout,
+				PollInterval: options.PermissionPollInterval,
+			})
+			if err != nil && decision != permission.TimedOut {
+				return result, err
+			}
+			switch decision {
+			case permission.Approved:
+			case permission.TimedOut:
+				result.PermissionTimedOut = true
+				return result, nil
+			default:
+				result.PermissionDenied = true
+				return result, nil
+			}
+		}
 	}
 
 	script := buildScript(options, commandID, paths.Workspace)
@@ -245,4 +287,22 @@ func stdinForLog(options Options) string {
 		return ""
 	}
 	return options.Stdin
+}
+
+func stdinForAnalysis(options Options) string {
+	if !options.UseStdin {
+		return ""
+	}
+	return options.Stdin
+}
+
+func commandBody(options Options) string {
+	if options.UseStdin {
+		return options.Stdin
+	}
+	quoted := make([]string, 0, len(options.Argv))
+	for _, arg := range options.Argv {
+		quoted = append(quoted, runner.ShellQuote(arg))
+	}
+	return strings.Join(quoted, " ")
 }

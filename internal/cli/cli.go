@@ -42,10 +42,12 @@ func (app App) Main(ctx context.Context, args []string, stdin io.Reader, stdout,
 		return app.snapshot(ctx, args[1:], stdout)
 	case "run":
 		return app.run(ctx, args[1:], stdin, stdout)
-	case "pane", "export", "uninstall", "debug":
+	case "pane":
+		return app.pane(ctx, args[1:], stdout)
+	case "export", "uninstall", "debug":
 		return WriteJSON(stdout, Result{OK: false, Error: "command not implemented yet"})
 	case "full-access":
-		return WriteJSON(stdout, Result{OK: false, Error: "command not implemented yet"})
+		return app.fullAccess(args[1:], stdout)
 	default:
 		return WriteJSON(stdout, Result{OK: false, Error: "unknown command: " + args[0]})
 	}

@@ -43,12 +43,17 @@ func TestEnsureCreatesStateTreeAndGitignore(t *testing.T) {
 	if st.CommandsDir != wantCommandsDir {
 		t.Fatalf("CommandsDir = %q, want %q", st.CommandsDir, wantCommandsDir)
 	}
+	wantPermissionsDir := filepath.Join(wantDir, "cache", "permissions")
+	if st.PermissionsDir != wantPermissionsDir {
+		t.Fatalf("PermissionsDir = %q, want %q", st.PermissionsDir, wantPermissionsDir)
+	}
 
 	for _, dir := range []string{
 		st.Dir,
 		filepath.Join(st.Dir, "clients"),
 		filepath.Join(st.Dir, "logs"),
 		filepath.Join(st.Dir, "cache", "commands"),
+		filepath.Join(st.Dir, "cache", "permissions"),
 	} {
 		if info, err := os.Stat(dir); err != nil || !info.IsDir() {
 			t.Fatalf("missing dir %s", dir)
@@ -163,6 +168,37 @@ func TestSaveAndLoadPaneState(t *testing.T) {
 	}
 	if !reflect.DeepEqual(out, in) {
 		t.Fatalf("loaded pane state = %#v, want %#v", out, in)
+	}
+}
+
+func TestLoadConfigMissingFileReturnsDefault(t *testing.T) {
+	st, err := Ensure(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	config, err := LoadConfig(st)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if config.FullAccess {
+		t.Fatalf("FullAccess = true, want false")
+	}
+}
+
+func TestSaveAndLoadConfig(t *testing.T) {
+	st, err := Ensure(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := SaveConfig(st, Config{FullAccess: true}); err != nil {
+		t.Fatal(err)
+	}
+	config, err := LoadConfig(st)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !config.FullAccess {
+		t.Fatalf("FullAccess = false, want true")
 	}
 }
 

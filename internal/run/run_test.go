@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -141,6 +142,76 @@ func TestRunDetachDoesNotCapture(t *testing.T) {
 	}
 }
 
+func TestRunDangerousCommandDeniedDoesNotInjectTargetCommand(t *testing.T) {
+	workspace := t.TempDir()
+	client := &permissionAnswerClient{
+		Fake:   tmux.NewFake(),
+		answer: "n",
+	}
+
+	result, err := Run(context.Background(), Options{
+		Workspace:              workspace,
+		Tmux:                   client,
+		ClientID:               "cl_test",
+		Pane:                   "main1",
+		CommandID:              "cmd_delete",
+		Argv:                   []string{"rm", "-rf", "dist"},
+		PollInterval:           time.Millisecond,
+		PollTimeout:            time.Second,
+		PermissionPollInterval: time.Millisecond,
+		PermissionTimeout:      time.Second,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.PermissionRequired || !result.PermissionDenied || result.PermissionTimedOut {
+		t.Fatalf("permission flags = %+v", result)
+	}
+	if result.ExitCode != nil {
+		t.Fatalf("exit code = %v, want nil", result.ExitCode)
+	}
+	for _, sent := range client.SentKeys {
+		if sent.PaneID == "%1" && strings.Contains(strings.Join(sent.Keys, " "), ".coterm/cache/commands/cmd_delete.sh") {
+			t.Fatalf("target command was injected after denial: %#v", client.SentKeys)
+		}
+	}
+}
+
+func TestRunFullAccessSkipsDangerousCommandPrompt(t *testing.T) {
+	workspace := t.TempDir()
+	paths, err := state.Ensure(workspace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := state.SaveConfig(paths, state.Config{FullAccess: true}); err != nil {
+		t.Fatal(err)
+	}
+	client := &captureAfterSendClient{
+		Fake:     tmux.NewFake(),
+		captured: "__COTERM_START_cmd_delete__\nremoved\n__COTERM_EXIT_cmd_delete__:0\n",
+	}
+
+	result, err := Run(context.Background(), Options{
+		Workspace:    workspace,
+		Tmux:         client,
+		ClientID:     "cl_test",
+		Pane:         "main1",
+		CommandID:    "cmd_delete",
+		Argv:         []string{"rm", "-rf", "dist"},
+		PollInterval: time.Millisecond,
+		PollTimeout:  time.Second,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.PermissionRequired {
+		t.Fatalf("permission required with full access enabled: %+v", result)
+	}
+	if len(client.SentKeys) != 1 {
+		t.Fatalf("sent keys = %#v, want only target command", client.SentKeys)
+	}
+}
+
 func TestWaitForExitMarkerWithoutTimeoutPollsUntilMarker(t *testing.T) {
 	client := &delayedCaptureClient{
 		Fake: tmux.NewFake(),
@@ -223,4 +294,23 @@ func (c *delayedCaptureClient) CapturePane(ctx context.Context, paneID string) (
 		return c.captures[c.captureCalls-1], nil
 	}
 	return c.captures[len(c.captures)-1], nil
+}
+
+type permissionAnswerClient struct {
+	*tmux.Fake
+	answer string
+}
+
+func (c *permissionAnswerClient) SendKeys(ctx context.Context, paneID string, keys ...string) error {
+	if err := c.Fake.SendKeys(ctx, paneID, keys...); err != nil {
+		return err
+	}
+	if len(keys) == 0 {
+		return nil
+	}
+	match := regexp.MustCompile(`'([^']+\.response)'`).FindStringSubmatch(keys[0])
+	if len(match) == 2 {
+		return os.WriteFile(match[1], []byte(c.answer), 0o644)
+	}
+	return nil
 }
