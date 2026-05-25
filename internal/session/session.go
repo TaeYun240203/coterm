@@ -5,7 +5,10 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"os"
+	"path/filepath"
+	"syscall"
 	"time"
 
 	"github.com/coterm/coterm/internal/pane"
@@ -34,6 +37,19 @@ func EnsurePaneContext(ctx context.Context, client tmux.Client, paths state.Path
 		return PaneInfo{}, err
 	}
 
+	var info PaneInfo
+	err := withSessionLock(ctx, paths, func() error {
+		var err error
+		info, err = ensurePaneLocked(ctx, client, paths, paneName)
+		return err
+	})
+	if err != nil {
+		return PaneInfo{}, err
+	}
+	return info, nil
+}
+
+func ensurePaneLocked(ctx context.Context, client tmux.Client, paths state.Paths, paneName string) (PaneInfo, error) {
 	sessionName := SessionName(paths.Workspace)
 	hasSession, err := client.HasSession(ctx, sessionName)
 	if err != nil {
@@ -75,7 +91,7 @@ func EnsurePaneContext(ctx context.Context, client tmux.Client, paths state.Path
 		return PaneInfo{}, err
 	}
 	if err := client.SelectLayout(ctx, sessionName, "tiled"); err != nil {
-		return PaneInfo{}, err
+		return PaneInfo{}, cleanupSplitPane(ctx, client, created.ID, err)
 	}
 
 	record := state.PaneRecord{
@@ -90,7 +106,7 @@ func EnsurePaneContext(ctx context.Context, client tmux.Client, paths state.Path
 		paneState.Panes = append(paneState.Panes, record)
 	}
 	if err := state.SavePaneState(paths, paneState); err != nil {
-		return PaneInfo{}, err
+		return PaneInfo{}, cleanupSplitPane(ctx, client, created.ID, err)
 	}
 
 	return PaneInfo{
@@ -99,6 +115,55 @@ func EnsurePaneContext(ctx context.Context, client tmux.Client, paths state.Path
 		PaneID:      created.ID,
 		Created:     true,
 	}, nil
+}
+
+func withSessionLock(ctx context.Context, paths state.Paths, fn func() error) error {
+	if err := os.MkdirAll(paths.Dir, 0o755); err != nil {
+		return err
+	}
+	lockPath := filepath.Join(paths.Dir, "session.lock")
+	file, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0o644)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+
+	if err := lockFile(ctx, file); err != nil {
+		return err
+	}
+	defer syscall.Flock(int(file.Fd()), syscall.LOCK_UN)
+
+	return fn()
+}
+
+func lockFile(ctx context.Context, file *os.File) error {
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+
+	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		err := syscall.Flock(int(file.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
+		if err == nil {
+			return nil
+		}
+		if err != syscall.EWOULDBLOCK && err != syscall.EAGAIN {
+			return err
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+		}
+	}
+}
+
+func cleanupSplitPane(ctx context.Context, client tmux.Client, paneID string, cause error) error {
+	if err := client.KillPane(ctx, paneID); err != nil {
+		return fmt.Errorf("%w; failed to kill pane %s: %v", cause, paneID, err)
+	}
+	return cause
 }
 
 func loadPaneState(paths state.Paths) (state.PaneState, error) {

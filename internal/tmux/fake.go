@@ -9,6 +9,7 @@ type Fake struct {
 	Sessions       map[string]bool
 	SessionCreated bool
 	Panes          []Pane
+	PanesBySession map[string][]Pane
 	Attached       string
 	SelectedLayout string
 	SentKeys       []SentKeys
@@ -28,9 +29,10 @@ type SentKeys struct {
 
 func NewFake() *Fake {
 	return &Fake{
-		Sessions:      make(map[string]bool),
-		Captures:      make(map[string]string),
-		VersionString: "tmux 3.4",
+		Sessions:       make(map[string]bool),
+		PanesBySession: make(map[string][]Pane),
+		Captures:       make(map[string]string),
+		VersionString:  "tmux 3.4",
 	}
 }
 
@@ -44,6 +46,9 @@ func (f *Fake) NewSession(ctx context.Context, session, cwd string) error {
 	_ = ctx
 	f.ensure()
 	f.Sessions[session] = true
+	if _, ok := f.PanesBySession[session]; !ok {
+		f.PanesBySession[session] = nil
+	}
 	f.SessionCreated = true
 	f.NewSessionCWD = cwd
 	return nil
@@ -51,31 +56,45 @@ func (f *Fake) NewSession(ctx context.Context, session, cwd string) error {
 
 func (f *Fake) Attach(ctx context.Context, session string) error {
 	_ = ctx
+	if err := f.requireSession(session); err != nil {
+		return err
+	}
 	f.Attached = session
 	return nil
 }
 
 func (f *Fake) ListPanes(ctx context.Context, session string) ([]Pane, error) {
 	_ = ctx
-	_ = session
-	return append([]Pane(nil), f.Panes...), nil
+	if err := f.requireSession(session); err != nil {
+		return nil, err
+	}
+	panes := f.sessionPanes(session)
+	f.Panes = append([]Pane(nil), panes...)
+	return append([]Pane(nil), panes...), nil
 }
 
 func (f *Fake) SplitWindow(ctx context.Context, session, cwd string) (Pane, error) {
 	_ = ctx
-	_ = session
+	if err := f.requireSession(session); err != nil {
+		return Pane{}, err
+	}
 	f.SplitWindowCWD = cwd
 	pane := Pane{ID: f.nextPaneID(), Active: true}
-	for i := range f.Panes {
-		f.Panes[i].Active = false
+	panes := f.sessionPanes(session)
+	for i := range panes {
+		panes[i].Active = false
 	}
-	f.Panes = append(f.Panes, pane)
+	panes = append(panes, pane)
+	f.PanesBySession[session] = panes
+	f.Panes = append([]Pane(nil), panes...)
 	return pane, nil
 }
 
 func (f *Fake) SelectLayout(ctx context.Context, session, layout string) error {
 	_ = ctx
-	_ = session
+	if err := f.requireSession(session); err != nil {
+		return err
+	}
 	f.SelectedLayout = layout
 	return nil
 }
@@ -97,7 +116,18 @@ func (f *Fake) CapturePane(ctx context.Context, paneID string) (string, error) {
 
 func (f *Fake) KillPane(ctx context.Context, paneID string) error {
 	_ = ctx
+	f.ensure()
 	f.KilledPanes = append(f.KilledPanes, paneID)
+	for session, panes := range f.PanesBySession {
+		for i, pane := range panes {
+			if pane.ID == paneID {
+				panes = append(panes[:i], panes[i+1:]...)
+				f.PanesBySession[session] = panes
+				f.Panes = append([]Pane(nil), panes...)
+				return nil
+			}
+		}
+	}
 	for i, pane := range f.Panes {
 		if pane.ID == paneID {
 			f.Panes = append(f.Panes[:i], f.Panes[i+1:]...)
@@ -119,9 +149,30 @@ func (f *Fake) ensure() {
 	if f.Sessions == nil {
 		f.Sessions = make(map[string]bool)
 	}
+	if f.PanesBySession == nil {
+		f.PanesBySession = make(map[string][]Pane)
+	}
 	if f.Captures == nil {
 		f.Captures = make(map[string]string)
 	}
+}
+
+func (f *Fake) requireSession(session string) error {
+	f.ensure()
+	if !f.Sessions[session] {
+		return fmt.Errorf("unknown tmux session: %s", session)
+	}
+	if _, ok := f.PanesBySession[session]; !ok {
+		f.PanesBySession[session] = append([]Pane(nil), f.Panes...)
+	}
+	return nil
+}
+
+func (f *Fake) sessionPanes(session string) []Pane {
+	if panes, ok := f.PanesBySession[session]; ok {
+		return append([]Pane(nil), panes...)
+	}
+	return nil
 }
 
 func (f *Fake) nextPaneID() string {
@@ -135,6 +186,13 @@ func (f *Fake) nextPaneID() string {
 }
 
 func (f *Fake) hasPane(id string) bool {
+	for _, panes := range f.PanesBySession {
+		for _, pane := range panes {
+			if pane.ID == id {
+				return true
+			}
+		}
+	}
 	for _, pane := range f.Panes {
 		if pane.ID == id {
 			return true

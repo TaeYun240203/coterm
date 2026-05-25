@@ -17,12 +17,30 @@ func NewExec() *ExecClient {
 
 func (ExecClient) HasSession(ctx context.Context, session string) (bool, error) {
 	cmd := exec.CommandContext(ctx, "tmux", "has-session", "-t", session)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			if msg := strings.TrimSpace(stderr.String()); msg != "" {
+				return false, fmt.Errorf("tmux has-session -t %s: %w: %s", session, ctxErr, msg)
+			}
+			return false, fmt.Errorf("tmux has-session -t %s: %w", session, ctxErr)
+		}
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) {
-			return false, nil
+			msg := strings.TrimSpace(stderr.String())
+			if exitErr.ExitCode() == 1 && isMissingSession(stderr.String()) {
+				return false, nil
+			}
+			if msg != "" {
+				return false, fmt.Errorf("tmux has-session -t %s: %w: %s", session, err, msg)
+			}
+			return false, fmt.Errorf("tmux has-session -t %s: %w", session, err)
 		}
-		return false, err
+		if msg := strings.TrimSpace(stderr.String()); msg != "" {
+			return false, fmt.Errorf("tmux has-session -t %s: %w: %s", session, err, msg)
+		}
+		return false, fmt.Errorf("tmux has-session -t %s: %w", session, err)
 	}
 	return true, nil
 }
@@ -42,6 +60,10 @@ func (c ExecClient) ListPanes(ctx context.Context, session string) ([]Pane, erro
 	if err != nil {
 		return nil, err
 	}
+	return parseListPanes(out)
+}
+
+func parseListPanes(out string) ([]Pane, error) {
 	out = strings.TrimSuffix(out, "\n")
 	if out == "" {
 		return nil, nil
@@ -54,13 +76,30 @@ func (c ExecClient) ListPanes(ctx context.Context, session string) ([]Pane, erro
 		if len(parts) != 3 {
 			return nil, fmt.Errorf("unexpected tmux list-panes line: %q", line)
 		}
+		if parts[0] == "" {
+			return nil, fmt.Errorf("unexpected tmux list-panes line with empty pane id: %q", line)
+		}
+		var active bool
+		switch parts[1] {
+		case "0":
+			active = false
+		case "1":
+			active = true
+		default:
+			return nil, fmt.Errorf("unexpected tmux list-panes active flag %q in line: %q", parts[1], line)
+		}
 		panes = append(panes, Pane{
 			ID:      parts[0],
-			Active:  parts[1] == "1",
+			Active:  active,
 			Command: parts[2],
 		})
 	}
 	return panes, nil
+}
+
+func isMissingSession(stderr string) bool {
+	return strings.Contains(stderr, "can't find session:") ||
+		strings.Contains(stderr, "no server running on")
 }
 
 func (c ExecClient) SplitWindow(ctx context.Context, session, cwd string) (Pane, error) {
