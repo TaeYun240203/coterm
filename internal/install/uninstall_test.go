@@ -88,3 +88,25 @@ func TestUninstallRejectsUnexpectedPathEscapes(t *testing.T) {
 		t.Fatal("expected guarded path rejection")
 	}
 }
+
+func TestUninstallRemovesBrokenSymlinkAtExpectedPath(t *testing.T) {
+	home := filepath.Join(t.TempDir(), "home")
+	binary := filepath.Join(home, ".local", "bin", "coterm")
+	if err := os.MkdirAll(filepath.Dir(binary), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(home, "missing-target"), binary); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := Uninstall(Options{Home: home})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Lstat(binary); !os.IsNotExist(err) {
+		t.Fatalf("expected broken symlink removed, err = %v", err)
+	}
+	if len(result.Removed) == 0 {
+		t.Fatalf("removed = %+v, want broken symlink listed", result.Removed)
+	}
+}

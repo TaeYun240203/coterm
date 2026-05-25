@@ -48,7 +48,7 @@ func Uninstall(options Options) (Result, error) {
 
 	var result Result
 	for _, target := range targets {
-		if _, err := os.Stat(target); errors.Is(err, os.ErrNotExist) {
+		if _, err := os.Lstat(target); errors.Is(err, os.ErrNotExist) {
 			result.Skipped = append(result.Skipped, target)
 			continue
 		} else if err != nil {
@@ -57,7 +57,7 @@ func Uninstall(options Options) (Result, error) {
 		if err := os.RemoveAll(target); err != nil {
 			return result, err
 		}
-		if _, err := os.Stat(target); errors.Is(err, os.ErrNotExist) {
+		if _, err := os.Lstat(target); errors.Is(err, os.ErrNotExist) {
 			result.Removed = append(result.Removed, target)
 		} else if err == nil {
 			result.Skipped = append(result.Skipped, target)

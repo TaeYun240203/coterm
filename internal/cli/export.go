@@ -33,8 +33,15 @@ func (app App) export(args []string, stdout io.Writer) int {
 	}
 	sort.Strings(files)
 	for _, path := range files {
-		if err := streamRedactedFile(path, stdout); err != nil {
+		file, err := os.Open(path)
+		if err != nil {
 			return WriteJSON(stdout, Result{OK: false, Error: err.Error()})
+		}
+		_ = file.Close()
+	}
+	for _, path := range files {
+		if err := streamRedactedFile(path, stdout); err != nil {
+			return 1
 		}
 	}
 	return 0

@@ -35,6 +35,9 @@ func TestExportStreamsLogsInLexicalOrderWithRedaction(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(logDir, "a.jsonl"), []byte("OPENAI_API_KEY=sk-test\n-----BEGIN OPENSSH PRIVATE KEY-----\nabc\n-----END OPENSSH PRIVATE KEY-----\n"+`{"api_key":"sk-json","token":"tok-json"}`+"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(filepath.Join(logDir, "c.jsonl"), []byte(`{"output_delta":"-----BEGIN OPENSSH PRIVATE KEY-----\njsonkey\n-----END OPENSSH PRIVATE KEY-----","safe":"ok"}`+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	var stdout bytes.Buffer
 	code := app.Main(context.Background(), []string{"export", "--format", "jsonl"}, nil, &stdout, io.Discard)
@@ -50,10 +53,13 @@ func TestExportStreamsLogsInLexicalOrderWithRedaction(t *testing.T) {
 	if first < 0 || second < 0 || first > second {
 		t.Fatalf("logs were not streamed in lexical order: %s", got)
 	}
-	for _, secret := range []string{"sk-test", "hunter2", "abc", "sk-json", "tok-json"} {
+	for _, secret := range []string{"sk-test", "hunter2", "abc", "sk-json", "tok-json", "jsonkey"} {
 		if strings.Contains(got, secret) {
 			t.Fatalf("secret %q leaked in export: %s", secret, got)
 		}
+	}
+	if !strings.Contains(got, `"safe":"ok"`) {
+		t.Fatalf("JSON log record was not preserved: %s", got)
 	}
 	if strings.Contains(got, "BEGIN OPENSSH PRIVATE KEY") || strings.Contains(got, "END OPENSSH PRIVATE KEY") {
 		t.Fatalf("private key block marker leaked in export: %s", got)

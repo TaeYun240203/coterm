@@ -28,19 +28,27 @@ type CommandLog struct {
 }
 
 var privateKeyRE = regexp.MustCompile(`(?s)-----BEGIN [^-]*PRIVATE KEY-----.*?-----END [^-]*PRIVATE KEY-----`)
-var embeddedSecretAssignmentRE = regexp.MustCompile(`(?i)\b([A-Za-z0-9_-]*(?:api_key|apikey|secret|token|password|passwd|private_key|privatekey)[A-Za-z0-9_-]*)\s*([=:])\s*([^\s,"'}]+)`)
+var embeddedAssignmentRE = regexp.MustCompile(`\b([A-Za-z_][A-Za-z0-9_]*)\s*([=:])\s*([^\s,"'}]+)`)
 
 func Redact(input string) string {
 	redacted := privateKeyRE.ReplaceAllString(input, "[REDACTED PRIVATE KEY]")
 	if jsonRedacted, ok := redactJSON([]byte(redacted)); ok {
 		return jsonRedacted
 	}
-	redacted = embeddedSecretAssignmentRE.ReplaceAllString(redacted, "$1$2 [REDACTED]")
+	redacted = embeddedAssignmentRE.ReplaceAllStringFunc(redacted, redactEmbeddedAssignment)
 	lines := strings.SplitAfter(redacted, "\n")
 	for i, line := range lines {
 		lines[i] = redactSecretAssignment(line)
 	}
 	return strings.Join(lines, "")
+}
+
+func redactEmbeddedAssignment(match string) string {
+	parts := embeddedAssignmentRE.FindStringSubmatch(match)
+	if len(parts) != 4 || !shouldRedactAssignmentKey(parts[1]) {
+		return match
+	}
+	return parts[1] + parts[2] + " [REDACTED]"
 }
 
 func redactJSON(data []byte) (string, bool) {
@@ -67,7 +75,7 @@ func redactJSONValue(value any) any {
 	case map[string]any:
 		next := make(map[string]any, len(typed))
 		for key, child := range typed {
-			if isSecretKey(strings.ToLower(key)) {
+			if shouldRedactAssignmentKey(key) {
 				next[key] = "[REDACTED]"
 				continue
 			}
@@ -128,7 +136,7 @@ func redactSecretAssignment(line string) string {
 		return line
 	}
 	key := strings.ToLower(strings.Trim(line[:keyEnd], ` "'	`))
-	if !isSecretKey(key) {
+	if !shouldRedactAssignmentKey(key) {
 		return line
 	}
 
@@ -163,12 +171,38 @@ func isSecretKey(key string) bool {
 	return false
 }
 
+func shouldRedactAssignmentKey(key string) bool {
+	key = strings.TrimSpace(strings.ToLower(key))
+	if isSecretKey(key) {
+		return true
+	}
+	if strings.HasSuffix(key, "_url") || strings.HasSuffix(key, "_uri") || strings.HasSuffix(key, "_dsn") {
+		return true
+	}
+	if strings.Contains(key, "access_key") || strings.Contains(key, "secret_key") {
+		return true
+	}
+	if strings.HasSuffix(key, "_key") && !strings.Contains(key, "public") {
+		return true
+	}
+	if strings.HasSuffix(key, "_credential") || key == "credential" || key == "credentials" {
+		return true
+	}
+	return false
+}
+
 func RedactWriter(dst io.Writer, src io.Reader) error {
 	scanner := bufio.NewScanner(src)
 	scanner.Buffer(make([]byte, 0, 64*1024), 10*1024*1024)
 	inPrivateKey := false
 	for scanner.Scan() {
 		line := scanner.Text()
+		if _, ok := redactJSON([]byte(line)); ok {
+			if _, err := fmt.Fprintln(dst, Redact(line)); err != nil {
+				return err
+			}
+			continue
+		}
 		if inPrivateKey {
 			if strings.Contains(line, "-----END ") && strings.Contains(line, "PRIVATE KEY-----") {
 				inPrivateKey = false
