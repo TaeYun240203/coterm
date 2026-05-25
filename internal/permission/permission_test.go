@@ -66,6 +66,9 @@ func TestPromptCommandUsesBoundedRead(t *testing.T) {
 		Body:       "rm -rf dist",
 	}, filepath.Join(paths.PermissionsDir, "cmd_test.response"))
 
+	if !strings.HasPrefix(command, "sh -c ") {
+		t.Fatalf("prompt command does not use known shell wrapper:\n%s", command)
+	}
 	for _, want := range []string{
 		"coterm_read_timeout=120",
 		"read -r -t \"$coterm_read_timeout\" coterm_answer",

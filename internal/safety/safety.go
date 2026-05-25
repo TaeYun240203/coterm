@@ -122,8 +122,10 @@ func analyzeCommand(argv []string) Analysis {
 func normalizePrefix(argv []string) []string {
 	for len(argv) > 0 {
 		switch filepath.Base(argv[0]) {
-		case "sudo", "doas", "command":
-			argv = argv[1:]
+		case "sudo", "doas":
+			argv = stripWrapperOptions(argv[1:])
+		case "command":
+			argv = stripCommandOptions(argv[1:])
 		default:
 			return argv
 		}
@@ -131,7 +133,60 @@ func normalizePrefix(argv []string) []string {
 	return argv
 }
 
+func stripWrapperOptions(args []string) []string {
+	for len(args) > 0 {
+		arg := args[0]
+		if arg == "--" {
+			return args[1:]
+		}
+		if !strings.HasPrefix(arg, "-") || arg == "-" {
+			return args
+		}
+		args = args[1:]
+		if wrapperOptionTakesValue(arg) && !strings.Contains(arg, "=") && len(args) > 0 {
+			args = args[1:]
+		}
+	}
+	return args
+}
+
+func wrapperOptionTakesValue(arg string) bool {
+	if strings.HasPrefix(arg, "--") {
+		name := strings.TrimPrefix(arg, "--")
+		if idx := strings.IndexByte(name, '='); idx >= 0 {
+			name = name[:idx]
+		}
+		switch name {
+		case "chdir", "close-from", "group", "host", "login-class", "prompt", "role", "type", "user":
+			return true
+		default:
+			return false
+		}
+	}
+	switch arg {
+	case "-C", "-D", "-g", "-h", "-p", "-T", "-t", "-U", "-u":
+		return true
+	default:
+		return false
+	}
+}
+
+func stripCommandOptions(args []string) []string {
+	for len(args) > 0 {
+		switch args[0] {
+		case "--":
+			return args[1:]
+		case "-p", "-v", "-V":
+			args = args[1:]
+		default:
+			return args
+		}
+	}
+	return args
+}
+
 func analyzeGit(args []string) Analysis {
+	args = stripGitGlobalOptions(args)
 	if len(args) == 0 {
 		return Analysis{}
 	}
@@ -150,6 +205,39 @@ func analyzeGit(args []string) Analysis {
 		}
 	}
 	return Analysis{}
+}
+
+func stripGitGlobalOptions(args []string) []string {
+	for len(args) > 0 {
+		arg := args[0]
+		if arg == "--" {
+			return args[1:]
+		}
+		if !strings.HasPrefix(arg, "-") || arg == "-" {
+			return args
+		}
+		args = args[1:]
+		if gitGlobalOptionTakesValue(arg) && !strings.Contains(arg, "=") && len(args) > 0 {
+			args = args[1:]
+		}
+	}
+	return args
+}
+
+func gitGlobalOptionTakesValue(arg string) bool {
+	if strings.HasPrefix(arg, "--") {
+		name := strings.TrimPrefix(arg, "--")
+		if idx := strings.IndexByte(name, '='); idx >= 0 {
+			name = name[:idx]
+		}
+		switch name {
+		case "exec-path", "git-dir", "namespace", "super-prefix", "work-tree":
+			return true
+		default:
+			return false
+		}
+	}
+	return arg == "-C" || arg == "-c"
 }
 
 func analyzePackage(cmd string, args []string, destructive []string) Analysis {

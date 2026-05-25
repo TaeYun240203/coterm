@@ -97,7 +97,7 @@ func promptCommand(options Options, responsePath string) string {
 	fmt.Fprintf(&b, "coterm_answer=$(perl -MIO::Select -e 'my $timeout = shift; my $sel = IO::Select->new(*STDIN); exit 124 unless $sel->can_read($timeout); my $line = <STDIN>; exit 1 unless defined $line; chomp $line; print $line;' \"$coterm_read_timeout\"); ")
 	fmt.Fprintf(&b, "coterm_status=$?; if [ \"$coterm_status\" -eq 0 ]; then printf '%%s' \"$coterm_answer\" > \"$coterm_response\"; fi; ")
 	fmt.Fprintf(&b, "else sleep \"$coterm_read_timeout\"; fi")
-	return b.String()
+	return "sh -c " + runner.ShellQuote(b.String())
 }
 
 func promptReadTimeoutSeconds(value time.Duration) int {
