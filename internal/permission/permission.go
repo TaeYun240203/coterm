@@ -90,8 +90,26 @@ func promptCommand(options Options, responsePath string) string {
 	writePrintf(&b, "Command ID: %s\n", options.CommandID)
 	writePrintf(&b, "Command/script:\n%s\n", options.Body)
 	writePrintf(&b, "Approve? y/N ")
-	fmt.Fprintf(&b, "IFS= read -r coterm_answer; printf '%%s' \"$coterm_answer\" > %s", runner.ShellQuote(responsePath))
+	fmt.Fprintf(&b, "coterm_response=%s; coterm_read_timeout=%d; ", runner.ShellQuote(responsePath), promptReadTimeoutSeconds(options.Timeout))
+	fmt.Fprintf(&b, "if (IFS= read -r -t 0 coterm_probe) </dev/null 2>/dev/null || [ $? -eq 1 ]; then ")
+	fmt.Fprintf(&b, "if IFS= read -r -t \"$coterm_read_timeout\" coterm_answer; then printf '%%s' \"$coterm_answer\" > \"$coterm_response\"; fi; ")
+	fmt.Fprintf(&b, "elif command -v perl >/dev/null 2>&1; then ")
+	fmt.Fprintf(&b, "coterm_answer=$(perl -MIO::Select -e 'my $timeout = shift; my $sel = IO::Select->new(*STDIN); exit 124 unless $sel->can_read($timeout); my $line = <STDIN>; exit 1 unless defined $line; chomp $line; print $line;' \"$coterm_read_timeout\"); ")
+	fmt.Fprintf(&b, "coterm_status=$?; if [ \"$coterm_status\" -eq 0 ]; then printf '%%s' \"$coterm_answer\" > \"$coterm_response\"; fi; ")
+	fmt.Fprintf(&b, "else sleep \"$coterm_read_timeout\"; fi")
 	return b.String()
+}
+
+func promptReadTimeoutSeconds(value time.Duration) int {
+	duration := timeout(value)
+	seconds := int(duration / time.Second)
+	if duration%time.Second != 0 {
+		seconds++
+	}
+	if seconds < 1 {
+		return 1
+	}
+	return seconds
 }
 
 func writePrintf(b *strings.Builder, format string, args ...string) {

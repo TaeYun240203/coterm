@@ -23,7 +23,7 @@ type Result struct {
 	PermissionRequired      bool              `json:"permission_required"`
 	PermissionDenied        bool              `json:"permission_denied"`
 	PermissionTimedOut      bool              `json:"permission_timed_out"`
-	FullAccess              bool              `json:"full_access"`
+	FullAccess              *bool             `json:"full_access,omitempty"`
 	OpenCommand             string            `json:"open_command,omitempty"`
 	Error                   string            `json:"error,omitempty"`
 }

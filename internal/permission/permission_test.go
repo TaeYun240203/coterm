@@ -52,6 +52,34 @@ func TestRequestApprovalInjectsPromptAndAcceptsExactY(t *testing.T) {
 	}
 }
 
+func TestPromptCommandUsesBoundedRead(t *testing.T) {
+	paths, err := state.Ensure(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	command := promptCommand(Options{
+		Paths:      paths,
+		CommandID:  "cmd_test",
+		Timeout:    2 * time.Minute,
+		Action:     "delete files",
+		TargetPane: "main1",
+		Body:       "rm -rf dist",
+	}, filepath.Join(paths.PermissionsDir, "cmd_test.response"))
+
+	for _, want := range []string{
+		"coterm_read_timeout=120",
+		"read -r -t \"$coterm_read_timeout\" coterm_answer",
+		"IO::Select",
+	} {
+		if !strings.Contains(command, want) {
+			t.Fatalf("prompt command missing bounded read fragment %q:\n%s", want, command)
+		}
+	}
+	if strings.Contains(command, "IFS= read -r coterm_answer;") {
+		t.Fatalf("prompt command still contains unbounded read:\n%s", command)
+	}
+}
+
 func TestRequestApprovalDeniesNonExactY(t *testing.T) {
 	paths, err := state.Ensure(t.TempDir())
 	if err != nil {

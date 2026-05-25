@@ -33,5 +33,6 @@ func (app App) fullAccess(args []string, stdout io.Writer) int {
 	default:
 		return WriteJSON(stdout, Result{OK: false, Error: "usage: coterm full-access on|off|status"})
 	}
-	return WriteJSON(stdout, Result{OK: true, FullAccess: config.FullAccess})
+	fullAccess := config.FullAccess
+	return WriteJSON(stdout, Result{OK: true, FullAccess: &fullAccess})
 }
