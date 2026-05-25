@@ -18,15 +18,18 @@ func TestDebugDoesNotExposeHiddenDetails(t *testing.T) {
 	report := Report{
 		Version: "0.1.0",
 		Warnings: []string{
-			"sample full-access permission1 tmux kill-pane",
+			"sample full-access permission permission1 tmux kill-pane tmux -V tmux has-session -t coterm",
 		},
-		LastInternalError: "tmux kill-pane failed",
+		LastInternalError: "tmux kill-pane failed on permission",
 	}
 	out := report.JSON()
-	for _, forbidden := range []string{"full-access", "permission1", "tmux kill-pane"} {
+	for _, forbidden := range []string{"full-access", "permission1", "tmux kill-pane", "tmux -V", "tmux has-session"} {
 		if strings.Contains(out, forbidden) {
 			t.Fatalf("debug output exposed %q: %s", forbidden, out)
 		}
+	}
+	if strings.Contains(out, `"permission"`) || strings.Contains(out, " permission ") {
+		t.Fatalf("debug output exposed bare permission pane name: %s", out)
 	}
 }
 

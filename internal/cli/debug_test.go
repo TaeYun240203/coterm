@@ -5,6 +5,8 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -29,5 +31,21 @@ func TestDebugCLIReturnsOKJSONWithoutHiddenStrings(t *testing.T) {
 		if strings.Contains(out, forbidden) {
 			t.Fatalf("debug output exposed %q: %s", forbidden, out)
 		}
+	}
+}
+
+func TestDebugCLIDoesNotCreateCotermStateOrGitignore(t *testing.T) {
+	app, _, workspace := NewTestApp(t)
+
+	var stdout bytes.Buffer
+	code := app.Main(context.Background(), []string{"debug"}, nil, &stdout, io.Discard)
+	if code != 0 {
+		t.Fatalf("code = %d output = %s", code, stdout.String())
+	}
+	if _, err := os.Stat(filepath.Join(workspace, ".coterm")); !os.IsNotExist(err) {
+		t.Fatalf("debug created .coterm, err = %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(workspace, ".gitignore")); !os.IsNotExist(err) {
+		t.Fatalf("debug created .gitignore, err = %v", err)
 	}
 }

@@ -67,7 +67,7 @@ type LogSummary struct {
 	TotalBytes int64 `json:"total_bytes"`
 }
 
-var rawTmuxCommandRE = regexp.MustCompile(`\btmux\s+(attach-session|capture-pane|has-session|kill-pane|list-panes|new-session|select-layout|send-keys|split-window)\b`)
+var rawTmuxCommandRE = regexp.MustCompile(`\btmux\s+(?:-[A-Za-z]\b|attach-session|capture-pane|has-session|kill-pane|list-panes|new-session|select-layout|send-keys|split-window)(?:\s+[^":,}]*)?`)
 
 func Build(ctx context.Context, options Options) (Report, error) {
 	if options.Tmux == nil {
@@ -242,6 +242,7 @@ func (r Report) sanitized() Report {
 func sanitize(value string) string {
 	value = logging.Redact(value)
 	value = strings.ReplaceAll(value, "full-access", "[redacted hidden command]")
+	value = regexp.MustCompile(`\bpermission\b`).ReplaceAllString(value, "[redacted internal pane]")
 	value = strings.ReplaceAll(value, "permission1", "[redacted internal pane]")
 	value = strings.ReplaceAll(value, "permission-", "[redacted internal pane]-")
 	value = rawTmuxCommandRE.ReplaceAllString(value, "tmux [redacted]")

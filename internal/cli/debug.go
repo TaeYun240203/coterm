@@ -4,14 +4,17 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"path/filepath"
 
 	debugpkg "github.com/coterm/coterm/internal/debug"
+	"github.com/coterm/coterm/internal/state"
+	"github.com/coterm/coterm/internal/workspace"
 )
 
 const Version = "0.1.0"
 
 func (app App) debug(ctx context.Context, stdout io.Writer) int {
-	paths, err := app.workspaceStatePaths()
+	paths, err := app.workspaceStatePathsNoEnsure()
 	if err != nil {
 		return WriteJSON(stdout, Result{OK: false, Error: err.Error()})
 	}
@@ -28,4 +31,27 @@ func (app App) debug(ctx context.Context, stdout io.Writer) int {
 		return 1
 	}
 	return 0
+}
+
+func (app App) workspaceStatePathsNoEnsure() (state.Paths, error) {
+	root, err := app.cwd()
+	if err != nil {
+		return state.Paths{}, err
+	}
+	workspaceRoot, err := workspace.FindRoot(root)
+	if err != nil {
+		return state.Paths{}, err
+	}
+	dir := filepath.Join(workspaceRoot, ".coterm")
+	return state.Paths{
+		Workspace:      workspaceRoot,
+		Dir:            dir,
+		SessionFile:    filepath.Join(dir, "session.toml"),
+		PanesFile:      filepath.Join(dir, "panes.toml"),
+		ConfigFile:     filepath.Join(dir, "config.toml"),
+		ClientsDir:     filepath.Join(dir, "clients"),
+		LogsDir:        filepath.Join(dir, "logs"),
+		CommandsDir:    filepath.Join(dir, "cache", "commands"),
+		PermissionsDir: filepath.Join(dir, "cache", "permissions"),
+	}, nil
 }
