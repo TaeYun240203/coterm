@@ -21,7 +21,6 @@ import (
 
 const (
 	DefaultPollInterval = 50 * time.Millisecond
-	DefaultPollTimeout  = 10 * time.Second
 )
 
 type Options struct {
@@ -203,8 +202,12 @@ func saveScript(paths state.Paths, commandID, script string) (string, error) {
 }
 
 func waitForExitMarker(ctx context.Context, client tmux.Client, paneID, commandID string, interval, timeout time.Duration) (string, int, error) {
-	deadline := time.NewTimer(timeout)
-	defer deadline.Stop()
+	var deadline <-chan time.Time
+	if timeout > 0 {
+		timer := time.NewTimer(timeout)
+		defer timer.Stop()
+		deadline = timer.C
+	}
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
@@ -219,7 +222,7 @@ func waitForExitMarker(ctx context.Context, client tmux.Client, paneID, commandI
 		select {
 		case <-ctx.Done():
 			return "", 0, ctx.Err()
-		case <-deadline.C:
+		case <-deadline:
 			return "", 0, fmt.Errorf("command %s did not finish within %s", commandID, timeout)
 		case <-ticker.C:
 		}
@@ -234,10 +237,7 @@ func pollInterval(options Options) time.Duration {
 }
 
 func pollTimeout(options Options) time.Duration {
-	if options.PollTimeout > 0 {
-		return options.PollTimeout
-	}
-	return DefaultPollTimeout
+	return options.PollTimeout
 }
 
 func stdinForLog(options Options) string {

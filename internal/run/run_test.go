@@ -141,6 +141,56 @@ func TestRunDetachDoesNotCapture(t *testing.T) {
 	}
 }
 
+func TestWaitForExitMarkerWithoutTimeoutPollsUntilMarker(t *testing.T) {
+	client := &delayedCaptureClient{
+		Fake: tmux.NewFake(),
+		captures: []string{
+			"before\n",
+			"still running\n",
+			"done\n__COTERM_EXIT_cmd_wait__:0\n",
+		},
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+
+	captured, code, err := waitForExitMarker(ctx, client, "%1", "cmd_wait", time.Millisecond, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0", code)
+	}
+	if !strings.Contains(captured, "done") {
+		t.Fatalf("captured output = %q, want final capture", captured)
+	}
+	if client.captureCalls < 3 {
+		t.Fatalf("capture calls = %d, want at least 3", client.captureCalls)
+	}
+}
+
+func TestWaitForExitMarkerHonorsExplicitTimeout(t *testing.T) {
+	client := &delayedCaptureClient{
+		Fake:     tmux.NewFake(),
+		captures: []string{"before\n"},
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+
+	_, _, err := waitForExitMarker(ctx, client, "%1", "cmd_wait", time.Millisecond, 2*time.Millisecond)
+	if err == nil {
+		t.Fatal("expected timeout error")
+	}
+	if !strings.Contains(err.Error(), "did not finish") {
+		t.Fatalf("error = %q, want timeout", err.Error())
+	}
+}
+
+func TestPollTimeoutDefaultIsUnlimited(t *testing.T) {
+	if got := pollTimeout(Options{}); got != 0 {
+		t.Fatalf("default poll timeout = %s, want 0", got)
+	}
+}
+
 type captureAfterSendClient struct {
 	*tmux.Fake
 	captured     string
@@ -157,4 +207,20 @@ func (c *captureAfterSendClient) CapturePane(ctx context.Context, paneID string)
 		return "", nil
 	}
 	return c.captured, nil
+}
+
+type delayedCaptureClient struct {
+	*tmux.Fake
+	captures     []string
+	captureCalls int
+}
+
+func (c *delayedCaptureClient) CapturePane(ctx context.Context, paneID string) (string, error) {
+	_ = ctx
+	_ = paneID
+	c.captureCalls++
+	if c.captureCalls <= len(c.captures) {
+		return c.captures[c.captureCalls-1], nil
+	}
+	return c.captures[len(c.captures)-1], nil
 }
