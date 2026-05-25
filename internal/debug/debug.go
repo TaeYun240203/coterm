@@ -184,8 +184,8 @@ func logSummary(paths state.Paths) (LogSummary, string) {
 	var summary LogSummary
 	lastError := ""
 	for _, path := range files {
-		info, err := os.Stat(path)
-		if err != nil || info.IsDir() {
+		info, err := os.Lstat(path)
+		if err != nil || !info.Mode().IsRegular() {
 			continue
 		}
 		summary.FileCount++

@@ -10,9 +10,9 @@ import (
 )
 
 func TestRedactSecrets(t *testing.T) {
-	input := "OPENAI_API_KEY=sk-abc123\npassword = hunter2\nDATABASE_URL=postgres://secret\nAWS_ACCESS_KEY_ID=AKIA_TEST\n-----BEGIN OPENSSH PRIVATE KEY-----\nabc\n-----END OPENSSH PRIVATE KEY-----"
+	input := "OPENAI_API_KEY=sk-abc123\npassword = hunter2\nDATABASE_URL=postgres://secret\nAWS_ACCESS_KEY_ID=AKIA_TEST\nAuthorization: Bearer ghp_secret\n-----BEGIN OPENSSH PRIVATE KEY-----\nabc\n-----END OPENSSH PRIVATE KEY-----"
 	got := Redact(input)
-	for _, secret := range []string{"sk-abc123", "hunter2", "postgres://secret", "AKIA_TEST", "abc"} {
+	for _, secret := range []string{"sk-abc123", "hunter2", "postgres://secret", "AKIA_TEST", "ghp_secret", "abc"} {
 		if strings.Contains(got, secret) {
 			t.Fatalf("secret %q leaked in %q", secret, got)
 		}
@@ -20,14 +20,14 @@ func TestRedactSecrets(t *testing.T) {
 }
 
 func TestRedactJSONSecrets(t *testing.T) {
-	input := `{"api_key":"sk-json","database_url":"postgres://secret","session_id":"session-visible","command_id":"command-visible","nested":{"token":"tok-json"},"items":[{"password":"pw-json"}],"output_delta":"-----BEGIN OPENSSH PRIVATE KEY-----\nabc\n-----END OPENSSH PRIVATE KEY-----","safe":"ok"}`
+	input := `{"api_key":"sk-json","database_url":"postgres://secret","authorization":"Bearer auth-json","session_id":"session-visible","command_id":"command-visible","nested":{"token":"tok-json"},"items":[{"password":"pw-json"}],"output_delta":"Authorization: Bearer ghp_json\n-----BEGIN OPENSSH PRIVATE KEY-----\nabc\n-----END OPENSSH PRIVATE KEY-----","safe":"ok"}`
 	got := Redact(input)
-	for _, secret := range []string{"sk-json", "tok-json", "pw-json", "postgres://secret", "abc"} {
+	for _, secret := range []string{"sk-json", "auth-json", "tok-json", "pw-json", "postgres://secret", "ghp_json", "abc"} {
 		if strings.Contains(got, secret) {
 			t.Fatalf("secret %q leaked in %q", secret, got)
 		}
 	}
-	for _, want := range []string{`"api_key":"[REDACTED]"`, `"database_url":"[REDACTED]"`, `"session_id":"session-visible"`, `"command_id":"command-visible"`, `"token":"[REDACTED]"`, `"password":"[REDACTED]"`, `"output_delta":"[REDACTED PRIVATE KEY]"`, `"safe":"ok"`} {
+	for _, want := range []string{`"api_key":"[REDACTED]"`, `"database_url":"[REDACTED]"`, `"authorization":"[REDACTED]"`, `"session_id":"session-visible"`, `"command_id":"command-visible"`, `"token":"[REDACTED]"`, `"password":"[REDACTED]"`, `"output_delta":"Authorization: [REDACTED]\n[REDACTED PRIVATE KEY]"`, `"safe":"ok"`} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("redacted JSON missing %q: %s", want, got)
 		}

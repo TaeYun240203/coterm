@@ -29,9 +29,11 @@ type CommandLog struct {
 
 var privateKeyRE = regexp.MustCompile(`(?s)-----BEGIN [^-]*PRIVATE KEY-----.*?-----END [^-]*PRIVATE KEY-----`)
 var embeddedAssignmentRE = regexp.MustCompile(`\b([A-Za-z_][A-Za-z0-9_]*)\s*([=:])\s*([^\s,"'}]+)`)
+var bearerTokenRE = regexp.MustCompile(`(?i)\b(Bearer)\s+([A-Za-z0-9._~+/\-=]+)`)
 
 func Redact(input string) string {
 	redacted := privateKeyRE.ReplaceAllString(input, "[REDACTED PRIVATE KEY]")
+	redacted = bearerTokenRE.ReplaceAllString(redacted, "$1 [REDACTED]")
 	if jsonRedacted, ok := redactJSON([]byte(redacted)); ok {
 		return jsonRedacted
 	}
@@ -163,6 +165,8 @@ func isSecretKey(key string) bool {
 		"passwd",
 		"private_key",
 		"privatekey",
+		"authorization",
+		"auth",
 	} {
 		if strings.Contains(key, marker) {
 			return true

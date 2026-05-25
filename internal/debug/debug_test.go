@@ -100,3 +100,35 @@ func TestBuildReportSummarizesWorkspaceWithoutHiddenDetails(t *testing.T) {
 		}
 	}
 }
+
+func TestBuildReportIgnoresSymlinkedLogs(t *testing.T) {
+	workspace := t.TempDir()
+	paths, err := state.Ensure(workspace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(workspace, "outside.jsonl")
+	if err := os.WriteFile(target, []byte(`{"error":"Authorization: Bearer ghp_secret"}`+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, filepath.Join(paths.LogsDir, "a.jsonl")); err != nil {
+		t.Fatal(err)
+	}
+
+	report, err := Build(context.Background(), Options{
+		Version:   "0.1.0",
+		Paths:     paths,
+		Tmux:      tmux.NewFake(),
+		Workspace: workspace,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.Logs.FileCount != 0 || report.Logs.TotalBytes != 0 {
+		t.Fatalf("symlinked log was summarized: %+v", report.Logs)
+	}
+	out := report.JSON()
+	if strings.Contains(out, "ghp_secret") {
+		t.Fatalf("symlink target contents leaked: %s", out)
+	}
+}
