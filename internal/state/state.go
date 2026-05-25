@@ -23,6 +23,13 @@ func Ensure(root string) (Paths, error) {
 	if err != nil {
 		return Paths{}, err
 	}
+	info, err := os.Stat(workspace)
+	if err != nil {
+		return Paths{}, err
+	}
+	if !info.IsDir() {
+		return Paths{}, errors.New("workspace root is not a directory")
+	}
 	st := pathsFor(workspace)
 	for _, dir := range []string{
 		st.Dir,
