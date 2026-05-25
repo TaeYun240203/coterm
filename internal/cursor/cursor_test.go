@@ -22,6 +22,37 @@ func TestDeltaFromLineCount(t *testing.T) {
 	if next.LineCount != 4 {
 		t.Fatalf("next line count = %d", next.LineCount)
 	}
+	if next.ByteCount != len("a\nb\nc\nd\n") {
+		t.Fatalf("next byte count = %d", next.ByteCount)
+	}
+}
+
+func TestDeltaFromByteCountDetectsSameLineAppend(t *testing.T) {
+	old := Cursor{LineCount: 1, ByteCount: len("prompt ")}
+	delta, next, external := Delta(old, "prompt done")
+	if external {
+		t.Fatal("external changes detected")
+	}
+	if delta != "done" {
+		t.Fatalf("delta = %q", delta)
+	}
+	if next.LineCount != 1 || next.ByteCount != len("prompt done") {
+		t.Fatalf("next cursor = %+v", next)
+	}
+}
+
+func TestDeltaFromByteCountStillDetectsLineRollback(t *testing.T) {
+	old := Cursor{LineCount: 5, ByteCount: 5}
+	delta, next, external := Delta(old, "12345")
+	if !external {
+		t.Fatal("expected external changes detected")
+	}
+	if delta != "12345" {
+		t.Fatalf("delta = %q", delta)
+	}
+	if next.LineCount != 1 || next.ByteCount != 5 {
+		t.Fatalf("next cursor = %+v", next)
+	}
 }
 
 func TestSnapshotTailTruncatesFromHead(t *testing.T) {

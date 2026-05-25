@@ -62,7 +62,7 @@ func (app App) snapshot(ctx context.Context, args []string, stdout io.Writer) in
 			return fmt.Errorf("capture pane %s: %v", *paneName, err)
 		}
 		output, truncated := cursor.Tail(captured, *lines, *bytes)
-		clientState.Cursors[*paneName] = cursor.Cursor{LineCount: len(cursor.SplitLines(captured))}
+		clientState.Cursors[*paneName] = cursor.Cursor{LineCount: len(cursor.SplitLines(captured)), ByteCount: len(captured)}
 		if err := cursor.SaveClientState(paths, clientState); err != nil {
 			return err
 		}

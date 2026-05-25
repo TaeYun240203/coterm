@@ -99,7 +99,8 @@ func parseListPanes(out string) ([]Pane, error) {
 
 func isMissingSession(stderr string) bool {
 	return strings.Contains(stderr, "can't find session:") ||
-		strings.Contains(stderr, "no server running on")
+		strings.Contains(stderr, "no server running on") ||
+		(strings.Contains(stderr, "error connecting to") && strings.Contains(stderr, "No such file or directory"))
 }
 
 func (c ExecClient) SplitWindow(ctx context.Context, session, cwd string) (Pane, error) {

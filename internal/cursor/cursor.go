@@ -19,6 +19,7 @@ import (
 
 type Cursor struct {
 	LineCount int `toml:"line_count"`
+	ByteCount int `toml:"byte_count,omitempty"`
 }
 
 type ClientState struct {
@@ -38,7 +39,16 @@ func NewClientID() (string, error) {
 
 func Delta(old Cursor, captured string) (string, Cursor, bool) {
 	lines := SplitLines(captured)
-	next := Cursor{LineCount: len(lines)}
+	next := Cursor{LineCount: len(lines), ByteCount: len(captured)}
+	if old.LineCount > len(lines) {
+		return captured, next, true
+	}
+	if old.ByteCount > 0 {
+		if old.ByteCount > len(captured) {
+			return captured, next, true
+		}
+		return captured[old.ByteCount:], next, false
+	}
 	if old.LineCount < 0 {
 		old.LineCount = 0
 	}
