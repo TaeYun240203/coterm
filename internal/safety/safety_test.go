@@ -16,8 +16,11 @@ func TestDetectDangerousCommands(t *testing.T) {
 		{"sudo", "-Eu", "root", "rm", "-rf", "dist"},
 		{"git", "-C", "repo", "reset", "--hard"},
 		{"git", "-c", "x=y", "clean", "-fdx"},
+		{"git", "-c", "alias.z=!rm -rf dist", "z"},
+		{"git", "-calias.z=!rm -rf dist", "z"},
 		{"sh", "-c", "rm -rf dist"},
 		{"bash", "-lc", "git reset --hard"},
+		{"bash", "-o", "pipefail", "-c", "rm -rf dist"},
 		{"npm", "uninstall", "react"},
 		{"brew", "uninstall", "node"},
 		{"mv", "build", "dist"},
@@ -68,7 +71,10 @@ func TestAnalyzeStdinScansCommandSegments(t *testing.T) {
 		"false || git clean -fdx",
 		"cat files.txt | rm -rf dist",
 		"sh -c 'rm -rf dist'",
+		"sh -c 'echo $(rm -rf dist)'",
+		"echo `git reset --hard`",
 		`bash -lc "git reset --hard"`,
+		`bash -o pipefail -c "rm -rf dist"`,
 	}
 	for _, script := range cases {
 		if res := Analyze(nil, script); !res.Dangerous {
@@ -79,6 +85,13 @@ func TestAnalyzeStdinScansCommandSegments(t *testing.T) {
 
 func TestAnalyzeStdinIgnoresSeparatorsInsideSimpleQuotes(t *testing.T) {
 	script := `printf '%s\n' 'echo ok; rm -rf dist'`
+	if res := Analyze(nil, script); res.Dangerous {
+		t.Fatalf("Analyze(%q) dangerous: %s", script, res.Reason)
+	}
+}
+
+func TestAnalyzeStdinIgnoresSubstitutionsInsideSingleQuotes(t *testing.T) {
+	script := `printf '%s\n' '$(rm -rf dist)'`
 	if res := Analyze(nil, script); res.Dangerous {
 		t.Fatalf("Analyze(%q) dangerous: %s", script, res.Reason)
 	}

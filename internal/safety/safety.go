@@ -16,14 +16,24 @@ func Analyze(argv []string, stdin string) Analysis {
 		return analyzeCommand(argv)
 	}
 	for _, line := range strings.Split(stdin, "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
+		if res := analyzeScriptLine(line); res.Dangerous {
+			return res
 		}
-		for _, segment := range splitCommandSegments(line) {
-			if res := analyzeCommand(shellFields(segment)); res.Dangerous {
-				return res
-			}
+	}
+	return Analysis{}
+}
+
+func analyzeScriptLine(line string) Analysis {
+	line = strings.TrimSpace(line)
+	if line == "" || strings.HasPrefix(line, "#") {
+		return Analysis{}
+	}
+	if res := analyzeCommandSubstitutions(line); res.Dangerous {
+		return res
+	}
+	for _, segment := range splitCommandSegments(line) {
+		if res := analyzeCommand(shellFields(segment)); res.Dangerous {
+			return res
 		}
 	}
 	return Analysis{}
@@ -125,6 +135,115 @@ func shellFields(line string) []string {
 	}
 	flush()
 	return fields
+}
+
+func analyzeCommandSubstitutions(line string) Analysis {
+	inSingle := false
+	inDouble := false
+	escaped := false
+
+	for i := 0; i < len(line); i++ {
+		ch := line[i]
+		if escaped {
+			escaped = false
+			continue
+		}
+		if ch == '\\' && !inSingle {
+			escaped = true
+			continue
+		}
+		if ch == '\'' && !inDouble {
+			inSingle = !inSingle
+			continue
+		}
+		if inSingle {
+			continue
+		}
+		if ch == '"' {
+			inDouble = !inDouble
+			continue
+		}
+		if ch == '$' && i+1 < len(line) && line[i+1] == '(' {
+			end := findCommandSubstitutionEnd(line, i+2)
+			if end > i+2 {
+				if res := Analyze(nil, line[i+2:end]); res.Dangerous {
+					return res
+				}
+				i = end
+			}
+			continue
+		}
+		if ch == '`' {
+			end := findBacktickEnd(line, i+1)
+			if end > i+1 {
+				if res := Analyze(nil, line[i+1:end]); res.Dangerous {
+					return res
+				}
+				i = end
+			}
+		}
+	}
+	return Analysis{}
+}
+
+func findCommandSubstitutionEnd(s string, start int) int {
+	depth := 1
+	inSingle := false
+	inDouble := false
+	escaped := false
+	for i := start; i < len(s); i++ {
+		ch := s[i]
+		if escaped {
+			escaped = false
+			continue
+		}
+		if ch == '\\' && !inSingle {
+			escaped = true
+			continue
+		}
+		if ch == '\'' && !inDouble {
+			inSingle = !inSingle
+			continue
+		}
+		if ch == '"' && !inSingle {
+			inDouble = !inDouble
+			continue
+		}
+		if inSingle || inDouble {
+			continue
+		}
+		if ch == '$' && i+1 < len(s) && s[i+1] == '(' {
+			depth++
+			i++
+			continue
+		}
+		if ch == ')' {
+			depth--
+			if depth == 0 {
+				return i
+			}
+		}
+	}
+	return -1
+}
+
+func findBacktickEnd(s string, start int) int {
+	escaped := false
+	for i := start; i < len(s); i++ {
+		ch := s[i]
+		if escaped {
+			escaped = false
+			continue
+		}
+		if ch == '\\' {
+			escaped = true
+			continue
+		}
+		if ch == '`' {
+			return i
+		}
+	}
+	return -1
 }
 
 func analyzeCommand(argv []string) Analysis {
@@ -241,6 +360,9 @@ func stripCommandOptions(args []string) []string {
 }
 
 func analyzeGit(args []string) Analysis {
+	if res := analyzeGitConfigAliases(args); res.Dangerous {
+		return res
+	}
 	args = stripGitGlobalOptions(args)
 	if len(args) == 0 {
 		return Analysis{}
@@ -258,6 +380,36 @@ func analyzeGit(args []string) Analysis {
 		}
 	}
 	return Analysis{}
+}
+
+func analyzeGitConfigAliases(args []string) Analysis {
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		switch {
+		case arg == "-c" && i+1 < len(args):
+			if res := analyzeGitConfigValue(args[i+1]); res.Dangerous {
+				return res
+			}
+			i++
+		case strings.HasPrefix(arg, "-c") && len(arg) > len("-c"):
+			if res := analyzeGitConfigValue(strings.TrimPrefix(arg, "-c")); res.Dangerous {
+				return res
+			}
+		}
+	}
+	return Analysis{}
+}
+
+func analyzeGitConfigValue(value string) Analysis {
+	name, configValue, ok := strings.Cut(value, "=")
+	if !ok || !strings.HasPrefix(strings.ToLower(strings.TrimSpace(name)), "alias.") {
+		return Analysis{}
+	}
+	configValue = strings.TrimSpace(configValue)
+	if !strings.HasPrefix(configValue, "!") {
+		return Analysis{}
+	}
+	return Analyze(nil, strings.TrimSpace(strings.TrimPrefix(configValue, "!")))
 }
 
 func hasGitCleanDryRun(args []string) bool {
@@ -328,12 +480,25 @@ func analyzeShell(args []string) Analysis {
 			return Analyze(nil, args[1])
 		}
 		if strings.HasPrefix(arg, "-") {
+			if shellOptionNeedsNextValue(arg) && len(args) > 1 {
+				args = args[2:]
+				continue
+			}
 			args = args[1:]
 			continue
 		}
 		return Analysis{}
 	}
 	return Analysis{}
+}
+
+func shellOptionNeedsNextValue(arg string) bool {
+	switch arg {
+	case "-o", "+o", "-O", "+O", "--init-file", "--rcfile":
+		return true
+	default:
+		return false
+	}
 }
 
 func analyzePackage(cmd string, args []string, destructive []string) Analysis {
