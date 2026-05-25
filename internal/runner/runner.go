@@ -10,11 +10,17 @@ import (
 func BuildArgvScript(commandID, workspace string, argv []string) string {
 	var b strings.Builder
 	writeHeader(&b, commandID, workspace)
+	writeWorkspaceEnter(&b, workspace)
+	fmt.Fprintf(&b, "if [ \"$coterm_code\" -eq 0 ]; then\n")
+	fmt.Fprintf(&b, "(\n")
 	quoted := make([]string, 0, len(argv))
 	for _, arg := range argv {
 		quoted = append(quoted, ShellQuote(arg))
 	}
 	fmt.Fprintf(&b, "%s\n", strings.Join(quoted, " "))
+	fmt.Fprintf(&b, ")\n")
+	fmt.Fprintf(&b, "coterm_code=$?\n")
+	fmt.Fprintf(&b, "fi\n")
 	writeFooter(&b, commandID)
 	return b.String()
 }
@@ -22,10 +28,16 @@ func BuildArgvScript(commandID, workspace string, argv []string) string {
 func BuildStdinScript(commandID, workspace, payload string) string {
 	var b strings.Builder
 	writeHeader(&b, commandID, workspace)
+	writeWorkspaceEnter(&b, workspace)
+	fmt.Fprintf(&b, "if [ \"$coterm_code\" -eq 0 ]; then\n")
+	fmt.Fprintf(&b, "(\n")
 	b.WriteString(payload)
 	if !strings.HasSuffix(payload, "\n") {
 		b.WriteByte('\n')
 	}
+	fmt.Fprintf(&b, ")\n")
+	fmt.Fprintf(&b, "coterm_code=$?\n")
+	fmt.Fprintf(&b, "fi\n")
 	writeFooter(&b, commandID)
 	return b.String()
 }
@@ -50,11 +62,14 @@ func ParseExitCode(output, commandID string) (int, bool) {
 func writeHeader(b *strings.Builder, commandID, workspace string) {
 	fmt.Fprintf(b, "#!/bin/sh\n")
 	fmt.Fprintf(b, "printf '\\n__COTERM_START_%s__\\n'\n", commandID)
-	fmt.Fprintf(b, "cd %s || exit 127\n", ShellQuote(workspace))
+}
+
+func writeWorkspaceEnter(b *strings.Builder, workspace string) {
+	fmt.Fprintf(b, "cd %s\n", ShellQuote(workspace))
+	fmt.Fprintf(b, "coterm_code=$?\n")
 }
 
 func writeFooter(b *strings.Builder, commandID string) {
-	fmt.Fprintf(b, "code=$?\n")
-	fmt.Fprintf(b, "printf '\\n__COTERM_EXIT_%s__:%%s\\n' \"$code\"\n", commandID)
-	fmt.Fprintf(b, "exit \"$code\"\n")
+	fmt.Fprintf(b, "printf '\\n__COTERM_EXIT_%s__:%%s\\n' \"$coterm_code\"\n", commandID)
+	fmt.Fprintf(b, "exit \"$coterm_code\"\n")
 }

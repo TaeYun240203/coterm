@@ -105,7 +105,7 @@ func TestRunStdinWritesPayload(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(script), "printf 'line1'\ncode=$?") {
+	if !strings.Contains(string(script), "printf 'line1'\n)\ncoterm_code=$?") {
 		t.Fatalf("script missing stdin payload before exit capture:\n%s", string(script))
 	}
 }
