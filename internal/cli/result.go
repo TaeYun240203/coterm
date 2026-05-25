@@ -13,6 +13,7 @@ type Result struct {
 	CommandID               string            `json:"command_id,omitempty"`
 	ExitCode                *int              `json:"exit_code,omitempty"`
 	OutputDelta             string            `json:"output_delta,omitempty"`
+	OutputDeltas            map[string]string `json:"output_deltas,omitempty"`
 	Panes                   map[string]string `json:"panes,omitempty"`
 	ChangedPanes            []string          `json:"changed_panes,omitempty"`
 	Truncated               bool              `json:"truncated"`

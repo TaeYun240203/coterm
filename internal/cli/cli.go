@@ -35,7 +35,13 @@ func (app App) Main(ctx context.Context, args []string, stdin io.Reader, stdout,
 		return app.open(ctx, stdout)
 	case "panes":
 		return app.panes(ctx, stdout)
-	case "run", "sync", "read", "snapshot", "pane", "export", "uninstall", "debug":
+	case "sync":
+		return app.sync(ctx, args[1:], stdout)
+	case "read":
+		return app.read(ctx, args[1:], stdout)
+	case "snapshot":
+		return app.snapshot(ctx, args[1:], stdout)
+	case "run", "pane", "export", "uninstall", "debug":
 		return WriteJSON(stdout, Result{OK: false, Error: "command not implemented yet"})
 	case "full-access":
 		return WriteJSON(stdout, Result{OK: false, Error: "command not implemented yet"})
