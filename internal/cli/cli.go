@@ -23,7 +23,6 @@ func Main(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io
 }
 
 func (app App) Main(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) int {
-	_ = stdin
 	_ = stderr
 
 	if len(args) == 0 || args[0] == "help" || args[0] == "--help" || args[0] == "-h" {
@@ -41,7 +40,9 @@ func (app App) Main(ctx context.Context, args []string, stdin io.Reader, stdout,
 		return app.read(ctx, args[1:], stdout)
 	case "snapshot":
 		return app.snapshot(ctx, args[1:], stdout)
-	case "run", "pane", "export", "uninstall", "debug":
+	case "run":
+		return app.run(ctx, args[1:], stdin, stdout)
+	case "pane", "export", "uninstall", "debug":
 		return WriteJSON(stdout, Result{OK: false, Error: "command not implemented yet"})
 	case "full-access":
 		return WriteJSON(stdout, Result{OK: false, Error: "command not implemented yet"})
