@@ -5,8 +5,10 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -20,6 +22,11 @@ type PaneInfo struct {
 	PaneName    string
 	PaneID      string
 	Created     bool
+}
+
+type CloseTarget struct {
+	PaneID  string
+	Command string
 }
 
 func SessionName(workspace string) string {
@@ -92,6 +99,60 @@ func EnsureInternalPaneContext(ctx context.Context, client tmux.Client, paths st
 		return PaneInfo{}, errors.New("internal pane name must be reserved")
 	}
 	return ensurePaneContext(ctx, client, paths, paneName)
+}
+
+func FindCloseTargetContext(ctx context.Context, client tmux.Client, paths state.Paths, paneName string) (CloseTarget, error) {
+	if err := pane.ValidateName(paneName); err != nil {
+		return CloseTarget{}, err
+	}
+	var target CloseTarget
+	err := withSessionLock(ctx, paths, func() error {
+		var err error
+		target, err = findCloseTargetLocked(ctx, client, paths, paneName)
+		return err
+	})
+	if err != nil {
+		return CloseTarget{}, err
+	}
+	return target, nil
+}
+
+func CloseMappedPaneContext(ctx context.Context, client tmux.Client, paths state.Paths, paneName, expectedPaneID string) error {
+	if err := pane.ValidateName(paneName); err != nil {
+		return err
+	}
+	if expectedPaneID == "" {
+		return errors.New("expected pane id is required")
+	}
+	return withSessionLock(ctx, paths, func() error {
+		sessionName, err := ensureSessionLocked(ctx, client, paths)
+		if err != nil {
+			return err
+		}
+		paneState, err := loadPaneState(paths)
+		if err != nil {
+			return err
+		}
+		recordIndex := findPaneRecord(paneState, paneName)
+		if recordIndex < 0 {
+			return fmt.Errorf("pane does not exist: %s", paneName)
+		}
+		if paneState.Panes[recordIndex].TmuxID != expectedPaneID {
+			return fmt.Errorf("pane mapping changed before close: %s", paneName)
+		}
+		tmuxPanes, err := client.ListPanes(ctx, sessionName)
+		if err != nil {
+			return err
+		}
+		if !livePaneIDs(tmuxPanes)[expectedPaneID] {
+			return fmt.Errorf("pane does not exist: %s", paneName)
+		}
+		if err := client.KillPane(ctx, expectedPaneID); err != nil {
+			return err
+		}
+		paneState.Panes = append(paneState.Panes[:recordIndex], paneState.Panes[recordIndex+1:]...)
+		return state.SavePaneState(paths, paneState)
+	})
 }
 
 func ensurePaneContext(ctx context.Context, client tmux.Client, paths state.Paths, paneName string) (PaneInfo, error) {
@@ -167,6 +228,36 @@ func ensurePaneLocked(ctx context.Context, client tmux.Client, paths state.Paths
 		PaneID:      created.ID,
 		Created:     true,
 	}, nil
+}
+
+func findCloseTargetLocked(ctx context.Context, client tmux.Client, paths state.Paths, paneName string) (CloseTarget, error) {
+	sessionName, err := ensureSessionLocked(ctx, client, paths)
+	if err != nil {
+		return CloseTarget{}, err
+	}
+	paneState, err := loadPaneState(paths)
+	if err != nil {
+		return CloseTarget{}, err
+	}
+	recordIndex := findPaneRecord(paneState, paneName)
+	if recordIndex < 0 {
+		return CloseTarget{}, fmt.Errorf("pane does not exist: %s", paneName)
+	}
+	paneID := paneState.Panes[recordIndex].TmuxID
+	tmuxPanes, err := client.ListPanes(ctx, sessionName)
+	if err != nil {
+		return CloseTarget{}, err
+	}
+	for _, tmuxPane := range tmuxPanes {
+		if tmuxPane.ID == paneID {
+			command := strings.TrimSpace(tmuxPane.Command)
+			if command == "" {
+				command = "unknown"
+			}
+			return CloseTarget{PaneID: paneID, Command: command}, nil
+		}
+	}
+	return CloseTarget{}, fmt.Errorf("pane does not exist: %s", paneName)
 }
 
 func ensureSessionLocked(ctx context.Context, client tmux.Client, paths state.Paths) (string, error) {

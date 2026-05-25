@@ -43,3 +43,30 @@ func TestFullAccessHiddenCommandPersistsWorkspaceConfig(t *testing.T) {
 		t.Fatalf("status result = %+v", result)
 	}
 }
+
+func TestFullAccessStatusIncludesFalseWhenOff(t *testing.T) {
+	app, _, _ := NewTestApp(t)
+
+	var stdout bytes.Buffer
+	code := app.Main(context.Background(), []string{"full-access", "off"}, nil, &stdout, io.Discard)
+	if code != 0 {
+		t.Fatalf("code = %d output = %s", code, stdout.String())
+	}
+
+	stdout.Reset()
+	code = app.Main(context.Background(), []string{"full-access", "status"}, nil, &stdout, io.Discard)
+	if code != 0 {
+		t.Fatalf("code = %d output = %s", code, stdout.String())
+	}
+	var raw map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &raw); err != nil {
+		t.Fatalf("expected JSON result, got %q: %v", stdout.String(), err)
+	}
+	value, ok := raw["full_access"]
+	if !ok {
+		t.Fatalf("status output missing full_access: %s", stdout.String())
+	}
+	if value != false {
+		t.Fatalf("full_access = %v, want false", value)
+	}
+}

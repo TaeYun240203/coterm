@@ -2,6 +2,7 @@ package permission
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -107,6 +108,40 @@ func TestRequestApprovalTimesOutAndDeletesStaleResponse(t *testing.T) {
 	}
 	if _, err := os.Stat(responsePath); !os.IsNotExist(err) {
 		t.Fatalf("response file was not deleted after timeout: %v", err)
+	}
+}
+
+func TestPermissionLockRespectsContextWhileHeld(t *testing.T) {
+	paths, err := state.Ensure(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	lockHeld := make(chan struct{})
+	releaseLock := make(chan struct{})
+	lockErrs := make(chan error, 1)
+
+	go func() {
+		lockErrs <- withPermissionLock(context.Background(), paths, func() error {
+			close(lockHeld)
+			<-releaseLock
+			return nil
+		})
+	}()
+	<-lockHeld
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
+	defer cancel()
+	err = withPermissionLock(ctx, paths, func() error {
+		t.Fatal("permission lock body ran while another request held the lock")
+		return nil
+	})
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("withPermissionLock error = %v, want context deadline exceeded", err)
+	}
+
+	close(releaseLock)
+	if err := <-lockErrs; err != nil {
+		t.Fatal(err)
 	}
 }
 

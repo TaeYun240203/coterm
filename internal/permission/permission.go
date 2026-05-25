@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/coterm/coterm/internal/runner"
@@ -52,18 +53,32 @@ func Request(ctx context.Context, options Options) (Decision, error) {
 	if err := os.MkdirAll(options.Paths.PermissionsDir, 0o755); err != nil {
 		return Denied, err
 	}
-	responsePath := filepath.Join(options.Paths.PermissionsDir, options.CommandID+".response")
-	_ = os.Remove(responsePath)
-	defer os.Remove(responsePath)
+	var decision Decision
+	err := withPermissionLock(ctx, options.Paths, func() error {
+		responsePath := filepath.Join(options.Paths.PermissionsDir, options.CommandID+".response")
+		_ = os.Remove(responsePath)
+		defer os.Remove(responsePath)
 
-	info, err := session.EnsureInternalPaneContext(ctx, options.Tmux, options.Paths, PermissionPaneName)
+		info, err := session.EnsureInternalPaneContext(ctx, options.Tmux, options.Paths, PermissionPaneName)
+		if err != nil {
+			return err
+		}
+		if err := options.Tmux.SendKeys(ctx, info.PaneID, promptCommand(options, responsePath)); err != nil {
+			return fmt.Errorf("send permission prompt: %v", err)
+		}
+		decision, err = waitForResponse(ctx, responsePath, timeout(options.Timeout), poll(options.PollInterval))
+		return err
+	})
 	if err != nil {
+		if decision != 0 {
+			return decision, err
+		}
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return TimedOut, ctxErr
+		}
 		return Denied, err
 	}
-	if err := options.Tmux.SendKeys(ctx, info.PaneID, promptCommand(options, responsePath)); err != nil {
-		return Denied, fmt.Errorf("send permission prompt: %v", err)
-	}
-	return waitForResponse(ctx, responsePath, timeout(options.Timeout), poll(options.PollInterval))
+	return decision, nil
 }
 
 func promptCommand(options Options, responsePath string) string {
@@ -133,4 +148,46 @@ func poll(value time.Duration) time.Duration {
 		return value
 	}
 	return DefaultPoll
+}
+
+func withPermissionLock(ctx context.Context, paths state.Paths, fn func() error) error {
+	if err := os.MkdirAll(paths.PermissionsDir, 0o755); err != nil {
+		return err
+	}
+	lockPath := filepath.Join(paths.PermissionsDir, "request.lock")
+	file, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0o644)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+
+	if err := lockPermissionFile(ctx, file); err != nil {
+		return err
+	}
+	defer syscall.Flock(int(file.Fd()), syscall.LOCK_UN)
+
+	return fn()
+}
+
+func lockPermissionFile(ctx context.Context, file *os.File) error {
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+
+	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		err := syscall.Flock(int(file.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
+		if err == nil {
+			return nil
+		}
+		if err != syscall.EWOULDBLOCK && err != syscall.EAGAIN {
+			return err
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+		}
+	}
 }

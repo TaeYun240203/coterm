@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"reflect"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -396,6 +397,79 @@ func TestListMappedPanesSerializesReconciliation(t *testing.T) {
 	}
 	if client.listCount() != 2 {
 		t.Fatalf("ListPanes calls = %d, want 2", client.listCount())
+	}
+}
+
+func TestFindCloseTargetAndCloseMappedPane(t *testing.T) {
+	root := t.TempDir()
+	paths, err := state.Ensure(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sessionName := SessionName(paths.Workspace)
+	fake := tmux.NewFake()
+	fake.Sessions[sessionName] = true
+	fake.PanesBySession[sessionName] = []tmux.Pane{{ID: "%7", Active: true, Command: "vim"}}
+	if err := state.SavePaneState(paths, state.PaneState{
+		Panes: []state.PaneRecord{{Name: "main1", TmuxID: "%7"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	target, err := FindCloseTargetContext(context.Background(), fake, paths, "main1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if target.PaneID != "%7" || target.Command != "vim" {
+		t.Fatalf("close target = %+v, want pane %%7 vim", target)
+	}
+	if err := CloseMappedPaneContext(context.Background(), fake, paths, "main1", target.PaneID); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(fake.KilledPanes, []string{"%7"}) {
+		t.Fatalf("killed panes = %#v, want [%%7]", fake.KilledPanes)
+	}
+	paneState, err := state.LoadPaneState(paths)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(paneState.Panes) != 0 {
+		t.Fatalf("saved pane records = %+v, want none", paneState.Panes)
+	}
+}
+
+func TestCloseMappedPaneRejectsChangedMappingAfterApproval(t *testing.T) {
+	root := t.TempDir()
+	paths, err := state.Ensure(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sessionName := SessionName(paths.Workspace)
+	fake := tmux.NewFake()
+	fake.Sessions[sessionName] = true
+	fake.PanesBySession[sessionName] = []tmux.Pane{
+		{ID: "%7", Active: false, Command: "vim"},
+		{ID: "%8", Active: true, Command: "bash"},
+	}
+	if err := state.SavePaneState(paths, state.PaneState{
+		Panes: []state.PaneRecord{{Name: "main1", TmuxID: "%8"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	err = CloseMappedPaneContext(context.Background(), fake, paths, "main1", "%7")
+	if err == nil || !strings.Contains(err.Error(), "pane mapping changed") {
+		t.Fatalf("CloseMappedPaneContext error = %v, want pane mapping changed", err)
+	}
+	if len(fake.KilledPanes) != 0 {
+		t.Fatalf("killed panes = %#v, want none", fake.KilledPanes)
+	}
+	paneState, err := state.LoadPaneState(paths)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(paneState.Panes) != 1 || paneState.Panes[0].TmuxID != "%8" {
+		t.Fatalf("saved pane records = %+v, want unchanged %%8 mapping", paneState.Panes)
 	}
 }
 

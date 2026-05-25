@@ -20,11 +20,61 @@ func Analyze(argv []string, stdin string) Analysis {
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
-		if res := analyzeCommand(strings.Fields(line)); res.Dangerous {
-			return res
+		for _, segment := range splitCommandSegments(line) {
+			if res := analyzeCommand(strings.Fields(segment)); res.Dangerous {
+				return res
+			}
 		}
 	}
 	return Analysis{}
+}
+
+func splitCommandSegments(line string) []string {
+	var segments []string
+	start := 0
+	inSingle := false
+	inDouble := false
+	escaped := false
+
+	flush := func(end int) {
+		segment := strings.TrimSpace(line[start:end])
+		if segment != "" {
+			segments = append(segments, segment)
+		}
+	}
+
+	for i := 0; i < len(line); i++ {
+		ch := line[i]
+		if escaped {
+			escaped = false
+			continue
+		}
+		if ch == '\\' && !inSingle {
+			escaped = true
+			continue
+		}
+		if ch == '\'' && !inDouble {
+			inSingle = !inSingle
+			continue
+		}
+		if ch == '"' && !inSingle {
+			inDouble = !inDouble
+			continue
+		}
+		if inSingle || inDouble {
+			continue
+		}
+		switch ch {
+		case ';', '|', '&':
+			flush(i)
+			if i+1 < len(line) && line[i+1] == ch {
+				i++
+			}
+			start = i + 1
+		}
+	}
+	flush(len(line))
+	return segments
 }
 
 func analyzeCommand(argv []string) Analysis {

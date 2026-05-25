@@ -44,3 +44,24 @@ func TestAnalyzeStdinScansTrimmedNonCommentLines(t *testing.T) {
 		t.Fatalf("Analyze(stdin) missing action/reason: %+v", res)
 	}
 }
+
+func TestAnalyzeStdinScansCommandSegments(t *testing.T) {
+	cases := []string{
+		"echo ok; rm -rf dist",
+		"true && git reset --hard",
+		"false || git clean -fdx",
+		"cat files.txt | rm -rf dist",
+	}
+	for _, script := range cases {
+		if res := Analyze(nil, script); !res.Dangerous {
+			t.Fatalf("Analyze(%q) not dangerous", script)
+		}
+	}
+}
+
+func TestAnalyzeStdinIgnoresSeparatorsInsideSimpleQuotes(t *testing.T) {
+	script := `printf '%s\n' 'echo ok; rm -rf dist'`
+	if res := Analyze(nil, script); res.Dangerous {
+		t.Fatalf("Analyze(%q) dangerous: %s", script, res.Reason)
+	}
+}
