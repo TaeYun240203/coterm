@@ -1,0 +1,134 @@
+package state
+
+import (
+	"errors"
+	"os"
+	"path/filepath"
+	"strings"
+)
+
+type Paths struct {
+	Workspace      string
+	Dir            string
+	SessionFile    string
+	PanesFile      string
+	ConfigFile     string
+	ClientsDir     string
+	LogsDir        string
+	CommandsDir    string
+	PermissionsDir string
+}
+
+type Config struct {
+	FullAccess bool `toml:"full_access"`
+}
+
+type PaneRecord struct {
+	Name     string `toml:"name"`
+	TmuxID   string `toml:"tmux_id"`
+	Created  string `toml:"created"`
+	LastSeen string `toml:"last_seen"`
+}
+
+type PaneState struct {
+	Panes []PaneRecord `toml:"panes"`
+}
+
+func Ensure(root string) (Paths, error) {
+	workspace, err := filepath.Abs(root)
+	if err != nil {
+		return Paths{}, err
+	}
+	info, err := os.Stat(workspace)
+	if err != nil {
+		return Paths{}, err
+	}
+	if !info.IsDir() {
+		return Paths{}, errors.New("workspace root is not a directory")
+	}
+	st := pathsFor(workspace)
+	for _, dir := range []string{
+		st.Dir,
+		st.ClientsDir,
+		st.LogsDir,
+		st.CommandsDir,
+		st.PermissionsDir,
+	} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return Paths{}, err
+		}
+	}
+	if err := ensureGitignore(workspace); err != nil {
+		return Paths{}, err
+	}
+	return st, nil
+}
+
+func LoadPaneState(paths Paths) (PaneState, error) {
+	var panes PaneState
+	if err := LoadTOML(paths.PanesFile, &panes); err != nil {
+		return PaneState{}, err
+	}
+	return panes, nil
+}
+
+func SavePaneState(paths Paths, panes PaneState) error {
+	return SaveTOML(paths.PanesFile, panes)
+}
+
+func LoadConfig(paths Paths) (Config, error) {
+	var config Config
+	if err := LoadTOML(paths.ConfigFile, &config); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return Config{}, nil
+		}
+		return Config{}, err
+	}
+	return config, nil
+}
+
+func SaveConfig(paths Paths, config Config) error {
+	return SaveTOML(paths.ConfigFile, config)
+}
+
+func pathsFor(workspace string) Paths {
+	dir := filepath.Join(workspace, ".coterm")
+	return Paths{
+		Workspace:      workspace,
+		Dir:            dir,
+		SessionFile:    filepath.Join(dir, "session.toml"),
+		PanesFile:      filepath.Join(dir, "panes.toml"),
+		ConfigFile:     filepath.Join(dir, "config.toml"),
+		ClientsDir:     filepath.Join(dir, "clients"),
+		LogsDir:        filepath.Join(dir, "logs"),
+		CommandsDir:    filepath.Join(dir, "cache", "commands"),
+		PermissionsDir: filepath.Join(dir, "cache", "permissions"),
+	}
+}
+
+func ensureGitignore(root string) error {
+	path := filepath.Join(root, ".gitignore")
+	data, err := os.ReadFile(path)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	if gitignoreHasCoterm(data) {
+		return nil
+	}
+
+	next := append([]byte(nil), data...)
+	if len(next) > 0 && next[len(next)-1] != '\n' {
+		next = append(next, '\n')
+	}
+	next = append(next, ".coterm/\n"...)
+	return os.WriteFile(path, next, 0o644)
+}
+
+func gitignoreHasCoterm(data []byte) bool {
+	for _, line := range strings.Split(string(data), "\n") {
+		if strings.TrimSpace(line) == ".coterm/" {
+			return true
+		}
+	}
+	return false
+}
