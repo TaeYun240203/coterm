@@ -13,7 +13,6 @@ type App struct {
 	Tmux        tmux.Client
 	Getwd       func() (string, error)
 	UserHomeDir func() (string, error)
-	IsTerminal  func() bool
 }
 
 func Main(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) int {
@@ -21,7 +20,6 @@ func Main(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io
 		Tmux:        tmux.NewExec(),
 		Getwd:       os.Getwd,
 		UserHomeDir: os.UserHomeDir,
-		IsTerminal:  stdinIsTerminal,
 	}
 	return app.Main(ctx, args, stdin, stdout, stderr)
 }
@@ -80,16 +78,4 @@ func (app App) homeDir() (string, error) {
 		return app.UserHomeDir()
 	}
 	return os.UserHomeDir()
-}
-
-func (app App) isTerminal() bool {
-	if app.IsTerminal != nil {
-		return app.IsTerminal()
-	}
-	return stdinIsTerminal()
-}
-
-func stdinIsTerminal() bool {
-	info, err := os.Stdin.Stat()
-	return err == nil && (info.Mode()&os.ModeCharDevice) != 0
 }

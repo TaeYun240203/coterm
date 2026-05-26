@@ -55,6 +55,34 @@ func TestExecHasSessionReturnsContextError(t *testing.T) {
 	}
 }
 
+func TestExecAttachUsesControllingTerminal(t *testing.T) {
+	installFakeTmux(t)
+	terminalPath := filepath.Join(t.TempDir(), "tty")
+	if err := os.WriteFile(terminalPath, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	oldOpenTTY := openControllingTTY
+	openControllingTTY = func() (*os.File, error) {
+		return os.OpenFile(terminalPath, os.O_RDWR|os.O_APPEND, 0)
+	}
+	t.Cleanup(func() {
+		openControllingTTY = oldOpenTTY
+	})
+	t.Setenv("TMUX_STDOUT", "attached\n")
+
+	if err := NewExec().Attach(context.Background(), "demo"); err != nil {
+		t.Fatal(err)
+	}
+
+	content, err := os.ReadFile(terminalPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(content), "attached\n") {
+		t.Fatalf("terminal content = %q, want fake tmux stdout", string(content))
+	}
+}
+
 func TestExecListPanesRejectsMalformedOutput(t *testing.T) {
 	installFakeTmux(t)
 	client := NewExec()

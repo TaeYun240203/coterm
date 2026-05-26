@@ -20,9 +20,6 @@ func (app App) open(ctx context.Context, stdout io.Writer) int {
 	if err != nil {
 		return WriteJSON(stdout, Result{OK: false, Error: err.Error()})
 	}
-	if !app.isTerminal() {
-		return WriteJSON(stdout, openRequiresTerminalResult())
-	}
 	if err := app.tmuxClient().Attach(ctx, sessionName); err != nil {
 		if isNotTerminalAttachError(err) {
 			return WriteJSON(stdout, openRequiresTerminalResult())
@@ -44,7 +41,9 @@ func isNotTerminalAttachError(err error) bool {
 	message := strings.ToLower(err.Error())
 	return strings.Contains(message, "not a terminal") ||
 		strings.Contains(message, "not a tty") ||
-		strings.Contains(message, "open terminal failed")
+		strings.Contains(message, "open terminal failed") ||
+		strings.Contains(message, "controlling terminal") ||
+		strings.Contains(message, "device not configured")
 }
 
 func (app App) workspaceStatePaths() (state.Paths, error) {
