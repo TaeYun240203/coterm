@@ -42,6 +42,30 @@ need tar
 need sed
 need mktemp
 
+latest_version() {
+  version="$(
+    curl -fsSL \
+      -H "Accept: application/vnd.github+json" \
+      -H "User-Agent: coterm-install" \
+      "https://api.github.com/repos/$OWNER/$REPO/releases/latest" 2>/dev/null \
+      | sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' \
+      | sed -n '1p'
+  )"
+  if [ -n "$version" ]; then
+    printf '%s\n' "$version"
+    return 0
+  fi
+
+  latest_url="$(
+    curl -fsIL -o /dev/null -w '%{url_effective}' \
+      -H "User-Agent: coterm-install" \
+      "https://github.com/$OWNER/$REPO/releases/latest"
+  )"
+  printf '%s\n' "$latest_url" \
+    | sed -n 's#.*/releases/tag/\([^/?#]*\).*#\1#p' \
+    | sed -n '1p'
+}
+
 case "$(uname -s)" in
   Darwin) os="darwin" ;;
   Linux) os="linux" ;;
@@ -64,11 +88,7 @@ version="${COTERM_VERSION:-}"
 if [ -n "$version" ]; then
   release_path="download/$version"
 else
-  version="$(
-    curl -fsSL "https://api.github.com/repos/$OWNER/$REPO/releases/latest" \
-      | sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' \
-      | sed -n '1p'
-  )"
+  version="$(latest_version)"
   release_path="latest/download"
 fi
 
