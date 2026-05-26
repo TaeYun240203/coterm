@@ -25,6 +25,9 @@ func NewTestApp(t *testing.T) (*App, *tmux.Fake, string) {
 		Getwd: func() (string, error) {
 			return workspace, nil
 		},
+		IsTerminal: func() bool {
+			return true
+		},
 	}
 	return app, fake, workspace
 }
@@ -104,6 +107,66 @@ func TestOpenReturnsJSONWhenAttachFails(t *testing.T) {
 	}
 	if !strings.Contains(result.Error, attachErr.Error()) {
 		t.Fatalf("error = %q, want it to contain %q", result.Error, attachErr.Error())
+	}
+}
+
+func TestOpenRequiresInteractiveTerminal(t *testing.T) {
+	app, fake, _ := NewTestApp(t)
+	app.IsTerminal = func() bool {
+		return false
+	}
+
+	var stdout bytes.Buffer
+	code := app.Main(context.Background(), []string{"open"}, nil, &stdout, io.Discard)
+	if code == 0 {
+		t.Fatal("expected non-zero exit code")
+	}
+	if fake.Attached != "" {
+		t.Fatalf("open attached session from non-terminal: %q", fake.Attached)
+	}
+
+	var result Result
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		t.Fatalf("expected JSON error, got %q: %v", stdout.String(), err)
+	}
+	if result.OK {
+		t.Fatalf("expected OK false, got %+v", result)
+	}
+	if result.OpenCommand != "coterm open" {
+		t.Fatalf("open_command = %q", result.OpenCommand)
+	}
+	if !strings.Contains(result.Error, "interactive terminal") {
+		t.Fatalf("error = %q, want interactive terminal guidance", result.Error)
+	}
+}
+
+func TestOpenRewritesTmuxNotTerminalAttachError(t *testing.T) {
+	app, _, _ := NewTestApp(t)
+	app.Tmux = &attachFailClient{
+		Fake: tmux.NewFake(),
+		err:  errors.New("tmux attach-session -t coterm_test: exit status 1: open terminal failed: not a terminal"),
+	}
+
+	var stdout bytes.Buffer
+	code := app.Main(context.Background(), []string{"open"}, nil, &stdout, io.Discard)
+	if code == 0 {
+		t.Fatal("expected non-zero exit code")
+	}
+
+	var result Result
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		t.Fatalf("expected JSON error, got %q: %v", stdout.String(), err)
+	}
+	if result.OpenCommand != "coterm open" {
+		t.Fatalf("open_command = %q", result.OpenCommand)
+	}
+	for _, forbidden := range []string{"tmux attach-session", "coterm_test"} {
+		if strings.Contains(result.Error, forbidden) {
+			t.Fatalf("error exposed raw attach detail %q: %s", forbidden, result.Error)
+		}
+	}
+	if !strings.Contains(result.Error, "interactive terminal") {
+		t.Fatalf("error = %q, want interactive terminal guidance", result.Error)
 	}
 }
 
