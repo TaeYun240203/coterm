@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
 )
@@ -51,8 +52,23 @@ func (c ExecClient) NewSession(ctx context.Context, session, cwd string) error {
 }
 
 func (c ExecClient) Attach(ctx context.Context, session string) error {
-	_, err := c.run(ctx, "attach-session", "-t", session)
-	return err
+	tty, err := openControllingTTY()
+	if err != nil {
+		return fmt.Errorf("open controlling terminal: %w", err)
+	}
+	defer tty.Close()
+
+	cmd := exec.CommandContext(ctx, "tmux", "attach-session", "-t", session)
+	cmd.Stdin = tty
+	cmd.Stdout = tty
+	cmd.Stderr = tty
+	if err := cmd.Run(); err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return fmt.Errorf("tmux attach-session -t %s: %w", session, ctxErr)
+		}
+		return fmt.Errorf("tmux attach-session -t %s: %w", session, err)
+	}
+	return nil
 }
 
 func (c ExecClient) ListPanes(ctx context.Context, session string) ([]Pane, error) {
@@ -157,4 +173,8 @@ func (ExecClient) run(ctx context.Context, args ...string) (string, error) {
 		return "", fmt.Errorf("tmux %s: %w", strings.Join(args, " "), err)
 	}
 	return stdout.String(), nil
+}
+
+var openControllingTTY = func() (*os.File, error) {
+	return os.OpenFile("/dev/tty", os.O_RDWR, 0)
 }
