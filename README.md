@@ -5,7 +5,7 @@
 ## Install
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/<owner>/coterm/main/scripts/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/TaeYun240203/coterm/main/scripts/install.sh | sh
 ```
 
 ## Open A Workspace Terminal

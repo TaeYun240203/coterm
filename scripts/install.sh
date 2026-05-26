@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-OWNER="${COTERM_GITHUB_OWNER:-coterm}"
+OWNER="${COTERM_GITHUB_OWNER:-TaeYun240203}"
 REPO="${COTERM_GITHUB_REPO:-coterm}"
 BIN_DIR="${COTERM_BIN_DIR:-$HOME/.local/bin}"
 SKILL_DIR="${COTERM_SKILL_DIR:-$HOME/.codex/skills/coterm-shared-terminal}"
