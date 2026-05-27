@@ -42,6 +42,7 @@ func isNotTerminalAttachError(err error) bool {
 	return strings.Contains(message, "not a terminal") ||
 		strings.Contains(message, "not a tty") ||
 		strings.Contains(message, "open terminal failed") ||
+		strings.Contains(message, "can't use /dev/tty") ||
 		strings.Contains(message, "controlling terminal") ||
 		strings.Contains(message, "device not configured")
 }

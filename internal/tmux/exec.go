@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"strings"
@@ -52,19 +53,21 @@ func (c ExecClient) NewSession(ctx context.Context, session, cwd string) error {
 }
 
 func (c ExecClient) Attach(ctx context.Context, session string) error {
-	tty, err := openControllingTTY()
-	if err != nil {
-		return fmt.Errorf("open controlling terminal: %w", err)
-	}
-	defer tty.Close()
-
 	cmd := exec.CommandContext(ctx, "tmux", "attach-session", "-t", session)
-	cmd.Stdin = tty
-	cmd.Stdout = tty
-	cmd.Stderr = tty
+	var stderr bytes.Buffer
+	cmd.Stdin = attachStdin
+	cmd.Stdout = attachStdout
+	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
+		msg := strings.TrimSpace(stderr.String())
 		if ctxErr := ctx.Err(); ctxErr != nil {
+			if msg != "" {
+				return fmt.Errorf("tmux attach-session -t %s: %w: %s", session, ctxErr, msg)
+			}
 			return fmt.Errorf("tmux attach-session -t %s: %w", session, ctxErr)
+		}
+		if msg != "" {
+			return fmt.Errorf("tmux attach-session -t %s: %w: %s", session, err, msg)
 		}
 		return fmt.Errorf("tmux attach-session -t %s: %w", session, err)
 	}
@@ -175,6 +178,7 @@ func (ExecClient) run(ctx context.Context, args ...string) (string, error) {
 	return stdout.String(), nil
 }
 
-var openControllingTTY = func() (*os.File, error) {
-	return os.OpenFile("/dev/tty", os.O_RDWR, 0)
-}
+var (
+	attachStdin  io.Reader = os.Stdin
+	attachStdout io.Writer = os.Stdout
+)

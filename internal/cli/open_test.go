@@ -108,32 +108,39 @@ func TestOpenReturnsJSONWhenAttachFails(t *testing.T) {
 }
 
 func TestOpenRewritesTmuxNotTerminalAttachError(t *testing.T) {
-	app, _, _ := NewTestApp(t)
-	app.Tmux = &attachFailClient{
-		Fake: tmux.NewFake(),
-		err:  errors.New("tmux attach-session -t coterm_test: exit status 1: open terminal failed: not a terminal"),
-	}
+	for _, attachErr := range []string{
+		"tmux attach-session -t coterm_test: exit status 1: open terminal failed: not a terminal",
+		"tmux attach-session -t coterm_test: exit status 1: can't use /dev/tty",
+	} {
+		t.Run(attachErr, func(t *testing.T) {
+			app, _, _ := NewTestApp(t)
+			app.Tmux = &attachFailClient{
+				Fake: tmux.NewFake(),
+				err:  errors.New(attachErr),
+			}
 
-	var stdout bytes.Buffer
-	code := app.Main(context.Background(), []string{"open"}, nil, &stdout, io.Discard)
-	if code == 0 {
-		t.Fatal("expected non-zero exit code")
-	}
+			var stdout bytes.Buffer
+			code := app.Main(context.Background(), []string{"open"}, nil, &stdout, io.Discard)
+			if code == 0 {
+				t.Fatal("expected non-zero exit code")
+			}
 
-	var result Result
-	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
-		t.Fatalf("expected JSON error, got %q: %v", stdout.String(), err)
-	}
-	if result.OpenCommand != "coterm open" {
-		t.Fatalf("open_command = %q", result.OpenCommand)
-	}
-	for _, forbidden := range []string{"tmux attach-session", "coterm_test"} {
-		if strings.Contains(result.Error, forbidden) {
-			t.Fatalf("error exposed raw attach detail %q: %s", forbidden, result.Error)
-		}
-	}
-	if !strings.Contains(result.Error, "interactive terminal") {
-		t.Fatalf("error = %q, want interactive terminal guidance", result.Error)
+			var result Result
+			if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+				t.Fatalf("expected JSON error, got %q: %v", stdout.String(), err)
+			}
+			if result.OpenCommand != "coterm open" {
+				t.Fatalf("open_command = %q", result.OpenCommand)
+			}
+			for _, forbidden := range []string{"tmux attach-session", "coterm_test"} {
+				if strings.Contains(result.Error, forbidden) {
+					t.Fatalf("error exposed raw attach detail %q: %s", forbidden, result.Error)
+				}
+			}
+			if !strings.Contains(result.Error, "interactive terminal") {
+				t.Fatalf("error = %q, want interactive terminal guidance", result.Error)
+			}
+		})
 	}
 }
 
